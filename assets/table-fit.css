@@ -1,0 +1,27 @@
+/* Full-width readable layout. No zooming, clipping, ellipsis or hidden metrics. */
+.fit-surface{container-type:inline-size;container-name:hp-table;width:100%;min-width:0;max-width:100%}
+.fit-scroll{width:100%;min-width:0;max-width:100%;max-height:none;overflow:visible;border-radius:0}
+.fit-scroll .data-table{width:100%!important;min-width:0!important;max-width:100%;table-layout:fixed;white-space:normal}
+.fit-scroll .data-table th,.fit-scroll .data-table td{min-width:0;max-width:none;white-space:normal;overflow-wrap:anywhere;word-break:normal}
+.fit-scroll .data-table .group-row th{padding:12px 8px;line-height:1.4;height:54px}
+.fit-scroll .data-table .metric-row th{padding:14px 7px;height:auto;min-height:90px;line-height:1.45}
+.fit-scroll .data-table td{padding:15px 7px;height:64px;line-height:1.55}
+.fit-scroll .data-table .value-cell,.fit-scroll .data-table .cell-btn{white-space:normal;overflow-wrap:anywhere;word-break:normal}
+.fit-scroll .data-table .cell-btn{max-width:100%;min-width:0;line-height:inherit}
+.fit-scroll .data-table .object-cell,.fit-scroll .data-table .object-head{position:static;box-shadow:none;border-right:2px solid #d9cee7}
+.fit-scroll .data-table thead .object-head{padding:14px 10px}
+.fit-scroll .data-table .object-cell{padding-left:12px;padding-right:9px}
+.fit-scroll .data-table .row-group .object-cell{padding-left:20px}
+.fit-scroll .data-table .row-person .object-cell{padding-left:28px}
+.fit-scroll .object-line{align-items:flex-start;gap:3px;min-width:0}
+.fit-scroll .tree-toggle{flex:0 0 20px;width:20px;min-width:20px;padding:0;line-height:inherit}
+.fit-scroll .name-btn{min-width:0;flex:1;word-break:normal;overflow-wrap:anywhere;text-align:left}
+.fit-scroll .data-table th small{font-size:13px;line-height:1.45;white-space:normal;overflow-wrap:anywhere;margin-top:7px}
+.fit-stacked{display:none}.fit-part+.fit-part{border-top:12px solid #f6f3fa}.fit-caption{margin:0;padding:11px 18px;background:#faf8fd;color:#69557e;font-size:14px;border-bottom:1px solid #e0d6eb}
+.fit-indicator{font-size:13px;color:#674b8c;background:#f2ecf9;border:1px solid #e1d5ef;border-radius:7px;padding:4px 8px;white-space:nowrap}
+.table-toolbar.flex{flex-wrap:wrap;gap:12px}.table-toolbar .seg{max-width:100%;flex-wrap:wrap}.table-toolbar .actions{max-width:100%}
+.fit-many>.fit-wide{display:none}.fit-many>.fit-stacked{display:block}
+@container hp-table (max-width:960px){.fit-adaptive>.fit-wide{display:none}.fit-adaptive>.fit-stacked{display:block}}
+@container hp-table (max-width:480px){.fit-scroll .data-table td{padding:12px 5px}.fit-scroll .data-table .object-cell{padding-left:7px;padding-right:5px}.fit-scroll .data-table .row-group .object-cell{padding-left:10px}.fit-scroll .data-table .row-person .object-cell{padding-left:13px}.fit-scroll .data-table .metric-row th{padding:12px 5px}.fit-scroll .tree-toggle{flex-basis:18px;width:18px;min-width:18px}}
+@supports not (container-type:inline-size){@media(max-width:1268px){.fit-adaptive>.fit-wide{display:none}.fit-adaptive>.fit-stacked{display:block}}}
+@media print{.fit-indicator{display:none}.fit-scroll{max-height:none;overflow:visible}}

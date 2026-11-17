@@ -22,6 +22,7 @@ jobs:
           node tests/xlsx-blank.test.cjs
           node tests/organization.test.cjs
           node tests/data-management.test.cjs
+          node tests/leaderboard.test.cjs
       - name: Package static app (code only)
         uses: actions/upload-artifact@v4
         with:
