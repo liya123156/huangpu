@@ -17,7 +17,9 @@ jobs:
       - name: Check JavaScript syntax
         run: for file in assets/*.js; do node --check "$file"; done
       - name: Run synthetic regression tests
-        run: node tests/core.test.cjs
+        run: |
+          node tests/core.test.cjs
+          node tests/xlsx-blank.test.cjs
       - name: Package static app (code only)
         uses: actions/upload-artifact@v4
         with:
