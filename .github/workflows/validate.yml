@@ -20,6 +20,7 @@ jobs:
         run: |
           node tests/core.test.cjs
           node tests/xlsx-blank.test.cjs
+          node tests/organization.test.cjs
       - name: Package static app (code only)
         uses: actions/upload-artifact@v4
         with:
@@ -33,3 +34,14 @@ jobs:
             netlify.toml
             .nojekyll
             tests/
+      - name: Report hosting readiness separately from code validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ENABLED=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.has_pages')
+          if [ "$ENABLED" = "true" ]; then
+            echo 'GitHub Pages is enabled; check its own deployment status before sharing the site.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Code validation passed. Hosting is NOT enabled; this is not a successful deployment.' >> "$GITHUB_STEP_SUMMARY"
+            echo "One-time setting: https://github.com/$GITHUB_REPOSITORY/settings/pages -> Deploy from a branch -> main -> / (root) -> Save." >> "$GITHUB_STEP_SUMMARY"
+          fi
