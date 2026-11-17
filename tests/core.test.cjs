@@ -1,0 +1,37 @@
+/* Synthetic fixtures only. Never upload real employee or transaction records. */
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const c = {console,Date,Map,Set,JSON,Number,String,Math,URL,Blob,TextEncoder,TextDecoder,crypto:require('node:crypto').webcrypto,document:{addEventListener(){}}};
+c.window=c;vm.createContext(c);
+for(const file of ['core','imports','views'])vm.runInContext(fs.readFileSync('assets/'+file+'.js','utf8'),c,{filename:file+'.js'});
+const H=c.HP;
+H.ui.start='2026-11-01';H.ui.end='2026-11-17';H.ui.period='batch';
+const root={level:'region',store:'',group:'',person:''};
+const person={person:'示例伙伴',personId:'TEST001',store:'示例店',group:'示例店A组',role:'顾问',joinDate:'2026-05-17'};
+H.data.novRoster=[person];
+const f=(level,value,extra={})=>({category:'activity',metric:'view',level,store:level==='region'?'':'示例店',group:['person','group'].includes(level)?'示例店A组':'',person:level==='person'?'示例伙伴':'',personId:level==='person'?'TEST001':'',value,start:'2026-11-01',end:'2026-11-15',periodType:'monthToDate',...extra});
+H.data.facts=[f('region',10),f('store',10),f('group',10),f('person',9)];
+assert.equal(H.value(root,'view').n,10,'Parent totals must not be added to their children');
+assert.equal(H.value(root,'actual').n,null);
+assert.equal(H.value(root,'target').n,null);
+assert.equal(H.value(root,'achieve').n,null);
+assert.equal(H.tenure(person,'2026-11-16').key,'m0_6');
+assert.equal(H.tenure(person,'2026-11-17').key,'m6_12');
+assert.equal(H.tenure({...person,joinDate:'2025-11-17'},'2026-11-17').key,'m12_24');
+assert.equal(H.tenure({...person,joinDate:'2024-11-17'},'2026-11-17').key,'m24plus');
+assert.equal(H.tenure({...person,joinDate:''}).key,'unknown');
+H.data.facts.push(f('region',14,{end:'2026-11-17'}));assert.equal(H.value(root,'view').n,14,'MTD snapshots must replace, not add');
+H.data.facts.push(f('region',4,{metric:'newhouse',start:'2026-11-17',end:'2026-11-17',periodType:'rolling30'}));
+assert.equal(H.value(root,'newhouse').n,4);H.ui.period='range';assert.equal(H.value(root,'newhouse').n,null);H.ui.period='batch';
+H.data.facts.push(f('person',10,{metric:'target'}));assert.equal(H.value(root,'target').n,null,'Region targets are independent');
+H.data.focusRules={confirmed:true,perfMetric:'actual',perfThreshold:1,activities:[{id:'view',threshold:1}]};assert.equal(H.focusClass({...person,level:'person'}).key,'pending','Missing performance must not classify as low');
+const period=H.sourcePeriod([['应用的筛选器: 2026年11月1日之后或当天；2026年11月16日之前']]);assert.equal(period.end,'2026-11-15');
+const rows=[['渠道','顾问','门店','店组','新增量','7天进入一带率','7日内带看客户量','30日内带看客户量'],['重点渠道总计','示例伙伴','示例店','示例店A组',2,0.5,1,1],['视频号','示例伙伴','示例店','示例店A组',2,0.5,1,1]];
+const q=H.prepare({name:'测试',rows},'测试渠道.xlsx','SYNTHETIC');const r=H.normalize(q);
+assert.equal(q.kind,'channelLong');assert.equal(r.errors.length,0);assert.equal(r.channels.length,1);assert.equal(r.facts.find(x=>x.level==='region'&&x.metric==='channel').value,2,'Channel totals and breakdowns must not double count');
+assert.equal(r.facts.find(x=>x.level==='region'&&x.metric==='viewrate').value,50);
+const vq=H.prepare({name:'测试',rows:[['大区','门店','店组','顾问','带看量','一手带看量'],['示例区','示例店','示例店A组','',1,1]]},'测试带看.xlsx','SYNTHETIC2');const vr=H.normalize(vq);assert.equal(vr.issues.length,1);assert.equal(vr.facts.length,0,'Unnamed record must not be assigned to a person');
+assert.equal(H.num(''),null);assert.equal(H.num('0'),0);assert.equal(H.esc('<script>'), '&lt;script&gt;');
+for(const file of fs.readdirSync('assets')){const text=fs.readFileSync('assets/'+file,'utf8');assert.ok(!/SH\d{8}/.test(text),'Real employee IDs must not be committed');assert.ok(!/sb_secret_|sk-proj-/.test(text),'Secrets must not be committed')}
+console.log('PASS: hierarchy, nulls, rolling periods, snapshot replacement, independent targets, tenure boundaries, missing-data classification, date filters, channel deduplication, unnamed records, escaping, and public-code privacy scan.');

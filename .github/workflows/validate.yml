@@ -1,0 +1,33 @@
+name: Validate and package dashboard
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check JavaScript syntax
+        run: for file in assets/*.js; do node --check "$file"; done
+      - name: Run synthetic regression tests
+        run: node tests/core.test.cjs
+      - name: Package static app (code only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: huangpu-static-app
+          include-hidden-files: true
+          retention-days: 7
+          path: |
+            index.html
+            assets/
+            README.md
+            netlify.toml
+            .nojekyll
+            tests/

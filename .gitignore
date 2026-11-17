@@ -1,0 +1,19 @@
+# Never commit private data or credentials
+.env
+.env.*
+!.env.example
+private/
+data/
+backups/
+*.xlsx
+*.xls
+*.csv
+*.tsv
+*完整备份*.json
+*人员名单*.json
+*数据包*.json
+*seed*.json
+node_modules/
+.DS_Store
+__pycache__/
+*.log
