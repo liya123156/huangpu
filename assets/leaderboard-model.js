@@ -39,11 +39,16 @@ H.lbPool=(level,settings=H.lbSettings(),range=H.lbRange(settings))=>H.entities()
 H.lbBuildMetric=(metric,level,settings=H.lbSettings())=>{
  const range=H.lbRange(settings),pool=H.lbPool(level,settings,range),entities=H.entities();
  const all=H.data.facts.filter(f=>f.category==='activity'&&f.metric===metric.id&&H.within(f,H.root()));
- const dated=all.filter(f=>f.periodType!=='rolling30'&&H.date(f.start)&&H.date(f.end)&&f.start>=range.start&&f.end<=range.end);
+ const dated=all.filter(f=>f.periodType!=='rolling30'&&(H.periodContains?H.periodContains(f,range.start,range.end,range.mode):H.date(f.start)&&H.date(f.end)&&f.start>=range.start&&f.end<=range.end));
  const cache=new Map();
  function get(entity,depth=0){
   const key=H.key(entity);if(cache.has(key))return cache.get(key);
   if(depth>4)return {n:null,rows:[],reason:'层级待核'};
+  if(H.calendarValue&&dated.some(f=>f.periodType==='weekly'||f.periodType==='monthly')){
+   const value=H.calendarValue(entity,metric.id,'activity',range,{strict:true,excludeLeaders:true});
+   if(value.n!==null&&(value.n<0||value.rows.some(f=>f.value<0))){value.n=null;value.reason='活动量负数或无效，待核对';}
+   cache.set(key,value);return value;
+  }
   const exact=dated.filter(f=>H.same(f,entity)),latest=H.latest(exact);
   let value;
   if(latest.reason)value={n:null,rows:[],reason:latest.reason};

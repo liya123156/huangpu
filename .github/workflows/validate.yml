@@ -23,6 +23,10 @@ jobs:
           node tests/organization.test.cjs
           node tests/data-management.test.cjs
           node tests/leaderboard.test.cjs
+          node tests/xlsx-large.test.cjs
+          node tests/weekly-model.test.cjs
+          node tests/weekly-import.test.cjs
+          node tests/performance-import.test.cjs
       - name: Package static app (code only)
         uses: actions/upload-artifact@v4
         with:

@@ -11,7 +11,21 @@ H.xlsxCell=(value,type,shared=[],inline='',hasFormula=false)=>{
 };
 const doc=s=>{const d=new DOMParser().parseFromString(s,'application/xml');if(d.querySelector('parsererror'))throw Error('Excel XML结构无法读取');return d};
 const els=(e,n)=>[...e.getElementsByTagNameNS('*',n)];
-H.readXlsx=async buffer=>{
+const hasData=value=>value!==undefined&&value!==null&&(typeof value!=='string'||value.trim()!=='');
+// A workbook can contain formatting all the way to row 1,048,576. Count data,
+// not row coordinates, and retain coordinates separately for source tracing.
+H.xlsxTableBuilder=()=>({rows:[],rowNumbers:[],dataCells:0,
+ append(rowNumber,values){
+  if(!Number.isInteger(rowNumber)||rowNumber<1||rowNumber>1048576)throw Error('Excel行号无效');
+  let last=-1,count=0;for(let i=0;i<values.length;i++)if(hasData(values[i])){last=i;count++}
+  if(last<0)return false;
+  if(last>=300)throw Error('工作表有效数据超过300列');
+  if(this.rows.length>=200000)throw Error('单张工作表有效数据超过200,000行');
+  if(this.dataCells+count>2000000)throw Error('单张工作表有效数据超过2,000,000个单元格');
+  this.rows.push(values.slice(0,last+1));this.rowNumbers.push(rowNumber);this.dataCells+=count;return true;
+ }
+});
+H.readXlsx=async (buffer,options={})=>{
  const bytes=new Uint8Array(buffer),view=new DataView(buffer),decoder=new TextDecoder();let tail=-1;
  for(let i=bytes.length-22;i>=Math.max(0,bytes.length-65557);i--)if(view.getUint32(i,true)===0x06054b50){tail=i;break}
  if(tail<0)throw Error('请另存为标准.xlsx；暂不支持加密文件或旧.xls');
@@ -35,21 +49,30 @@ H.readXlsx=async buffer=>{
  const book=doc(await text('xl/workbook.xml')),relations=doc(await text('xl/_rels/workbook.xml.rels')),paths=new Map();
  for(const r of els(relations,'Relationship')){if(r.getAttribute('TargetMode')==='External')continue;const target=r.getAttribute('Target');const parts=(target.startsWith('/')?target.slice(1):'xl/'+target).split('/'),out=[];for(const p of parts)if(p==='..')out.pop();else if(p&&p!=='.')out.push(p);paths.set(r.getAttribute('Id'),out.join('/'))}
  const sharedXML=await text('xl/sharedStrings.xml'),shared=sharedXML?els(doc(sharedXML),'si').map(s=>els(s,'t').map(t=>t.textContent).join('')):[];
- const date1904=els(book,'workbookPr')[0]?.getAttribute('date1904')==='1',sheets=[];
- for(const sheet of els(book,'sheet')){
+ const date1904=['1','true'].includes(els(book,'workbookPr')[0]?.getAttribute('date1904')),sheets=[],bookSheets=els(book,'sheet');let workbookCells=0;
+ const report=async info=>{if(typeof options.onProgress==='function')options.onProgress(info);if(typeof setTimeout==='function')await new Promise(resolve=>setTimeout(resolve,0))};
+ for(let si=0;si<bookSheets.length;si++){
+  const sheet=bookSheets[si],name=sheet.getAttribute('name')||'工作表';
   const id=sheet.getAttribute('r:id')||sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id'),path=paths.get(id);if(!path)continue;
-  const xml=doc(await text(path)),rows=[];let cells=0,nextRow=0;
+  await report({sheet:name,index:si+1,total:bookSheets.length,processedRows:0,dataRows:0});
+  const xml=doc(await text(path)),table=H.xlsxTableBuilder();let nextRow=0,processedRows=0;
   for(const row of els(xml,'row')){
-   const ri=row.hasAttribute('r')?Number(row.getAttribute('r'))-1:nextRow;nextRow=ri+1;if(ri<0||ri>20000)throw Error('单张表超过20,000行');const values=[];let nextCol=0;
+   const ri=row.hasAttribute('r')?Number(row.getAttribute('r'))-1:nextRow;nextRow=ri+1;const values=[];let nextCol=0;
    for(const cell of els(row,'c')){
-    if(++cells>250000)throw Error('单张工作表单元格过多');const letters=(cell.getAttribute('r')||'').match(/^[A-Z]+/i)?.[0];let col=nextCol;
-    if(letters){col=0;for(const letter of letters.toUpperCase())col=col*26+letter.charCodeAt(0)-64;col--}if(col>300)throw Error('工作表超过300列');nextCol=col+1;
+    const letters=(cell.getAttribute('r')||'').match(/^[A-Z]+/i)?.[0];let col=nextCol;
+    if(letters){col=0;for(const letter of letters.toUpperCase())col=col*26+letter.charCodeAt(0)-64;col--}if(col<0||col>=16384)throw Error('Excel列号无效');nextCol=col+1;
     const value=els(cell,'v')[0]?.textContent,type=cell.getAttribute('t'),inline=els(cell,'t').map(t=>t.textContent).join('');
-    values[col]=H.xlsxCell(value,type,shared,inline,els(cell,'f').length>0);
+    const parsed=H.xlsxCell(value,type,shared,inline,els(cell,'f').length>0);
+    // Empty formatting in far-right columns must not allocate wide arrays.
+    if(hasData(parsed)){if(col>=300)throw Error('工作表有效数据超过300列');values[col]=parsed}
+    else if(col<300)values[col]=parsed;
    }
-   rows[ri]=values;
+   table.append(ri+1,values);processedRows++;
+   if(processedRows%1000===0)await report({sheet:name,index:si+1,total:bookSheets.length,processedRows,dataRows:table.rows.length});
   }
-  if(rows.some(r=>r?.some(v=>v!==''&&v!==undefined)))sheets.push({name:sheet.getAttribute('name')||'工作表',rows:Array.from({length:rows.length},(_,i)=>rows[i]||[]),date1904});
+  workbookCells+=table.dataCells;if(workbookCells>4000000)throw Error('工作簿有效数据超过4,000,000个单元格');
+  if(table.rows.length)sheets.push({name,rows:table.rows,rowNumbers:table.rowNumbers,date1904});
+  await report({sheet:name,index:si+1,total:bookSheets.length,processedRows,dataRows:table.rows.length,done:true});
  }
  if(!sheets.length)throw Error('未找到可读取工作表');return sheets;
 };

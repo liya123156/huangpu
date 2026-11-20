@@ -1,0 +1,31 @@
+/* Calendar and workbook review controls follow the established purple theme. */
+.calendar-filters { gap:16px; align-items:center; }
+.calendar-control { display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; }
+.calendar-control label { display:flex; align-items:center; gap:8px; }
+.calendar-control input { min-width:150px; }
+.calendar-control input[type=number] { width:110px; min-width:100px; }
+.calendar-control .small { min-width:40px; font-size:23px; line-height:1.2; }
+.calendar-caption { flex-basis:100%; margin:0; padding-top:12px; border-top:1px solid #ddd4ef; color:#675a7c; font-size:15px; }
+.week-rule { margin-left:auto; }
+.import-metrics { display:flex; flex-wrap:wrap; gap:10px 20px; margin:16px 0; }
+.import-metrics span { padding:12px 16px; background:#f5f1fb; border-radius:10px; }
+.import-metrics b { font-size:24px; color:#462b78; }
+.import-status { color:#4c376b; margin:10px 0 0; font-size:16px; }
+.queue-panel .file-card { width:100%; min-width:0; box-sizing:border-box; }
+.queue-panel .filelist { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.queue-panel .file-card .actions { flex-wrap:wrap; }
+.queue-panel .file-card p { overflow-wrap:anywhere; }
+.queue-panel .file-card small { color:#6e647c; line-height:1.7; }
+.performance-summary,.undated-summary { margin-top:24px; }
+.performance-summary > h2 { margin-bottom:12px; }
+.performance-role { box-shadow:none; margin:12px 0; border:1px solid #dfd7ec; padding:17px 20px; }
+.performance-role summary { display:flex; flex-wrap:wrap; gap:8px; cursor:pointer; line-height:1.7; }
+.performance-role table td { font-variant-numeric:tabular-nums; }
+.performance-role table th,.undated-summary th { white-space:normal; }
+.undated-summary b { color:#51377a; }
+.undated-summary details { margin-top:14px; }
+.undated-summary table { width:100%; table-layout:fixed; }
+.undated-summary td { white-space:normal; overflow-wrap:anywhere; }
+.weekly-overlap { margin-top:16px; }
+@media(max-width:1100px){.queue-panel .filelist{grid-template-columns:1fr}.week-rule{margin-left:0}}
+@media(max-width:600px){.calendar-filters>.seg{flex-wrap:wrap}.calendar-filters label{max-width:100%}.calendar-filters select{max-width:100%}.performance-role{padding:14px 10px}.performance-role summary span{margin-left:0!important}.performance-role table{font-size:14px}.calendar-control{width:100%}}

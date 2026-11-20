@@ -92,7 +92,7 @@ H.changeDataSafely=async next=>{
 // Attach exact source identity to new imports; old backups remain readable.
 const normalize=H.normalize;
 H.normalize=q=>{const out=normalize(q);for(const k of ['facts','roster','channels','flows','issues'])for(const r of out[k]||[]){r.sourceFile=q.file;r.sourceSheet=q.sheet;}
- if(q.category==='roster'||q.kind==='roster')for(const r of out.roster){const row=q.rows[r.row-1]||[],roleIndex=q.mapping.indexOf('_role'),raw=String(row[roleIndex]||'');if(/大区总|大区负责人/.test(raw)){r.role='大区总';r.management=true;}else if(/店总/.test(raw)){r.role='店总';r.management=true;}}
+ if(q.category==='roster'||q.kind==='roster')for(const r of out.roster){const row=q.rows[q.rowNumbers?q.rowNumbers.indexOf(r.row):r.row-1]||[],roleIndex=q.mapping.indexOf('_role'),raw=String(row[roleIndex]||'');if(/大区总|大区负责人/.test(raw)){r.role='大区总';r.management=true;}else if(/店总/.test(raw)){r.role='店总';r.management=true;}}
  return out;
 };
 // Managers without a team are not missing consultant assignments or consultant ranking entries.

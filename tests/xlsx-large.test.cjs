@@ -1,0 +1,35 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const c={HP:{},console};vm.createContext(c);vm.runInContext(fs.readFileSync('assets/xlsx-reader.js','utf8'),c);
+const table=c.HP.xlsxTableBuilder();
+table.append(1,['姓名','数量']);
+table.append(2,['示例顾问',0]);
+table.append(20001,['另一顾问','',3]);
+table.append(1048576,[]);
+table.append(1048576,['','   ',null,undefined]);
+assert.deepEqual(Array.from(table.rowNumbers),[1,2,20001]);
+assert.equal(table.rows.length,3);
+assert.equal(table.rows[1][1],0);
+assert.equal(table.rows[2][1],'');
+assert.equal(table.rows[2][2],3);
+assert.equal(table.dataCells,6);
+// Sparse rows are retained with source row numbers, without a million-row array.
+table.append(1048576,['最后一行的有效记录']);
+assert.equal(table.rows.length,4);
+assert.equal(table.rowNumbers[3],1048576);
+assert.throws(()=>table.append(1048577,['越界']),/行号/);
+assert.throws(()=>table.append(1.5,['非法']),/行号/);
+const large=c.HP.xlsxTableBuilder();
+for(let i=1;i<=20001;i++)large.append(i,[i,0]);
+assert.equal(large.rows.length,20001);
+assert.equal(large.dataCells,40002);
+// Limits apply to nonempty data, not whitespace or formatting-only cells.
+const formatting=[];formatting[10000]='';large.append(1048576,formatting);
+assert.equal(large.rows.length,20001);
+const tooWide=[];tooWide[300]=1;
+assert.throws(()=>large.append(3,tooWide),/300列/);
+large.rows.length=200000;assert.throws(()=>large.append(200001,[1]),/200,000行/);
+const manyCells=c.HP.xlsxTableBuilder();manyCells.dataCells=2000000;
+assert.equal(manyCells.append(1,[]),false);
+assert.throws(()=>manyCells.append(2,[0]),/2,000,000/);
+console.log('PASS: large/sparse XLSX tables skip blank formatting, retain original row numbers and zeros, and enforce effective-data limits.');
