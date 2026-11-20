@@ -49,7 +49,7 @@ H.sourceList=(data=H.data)=>{
   if(k==='novAudit'){if(r.period)x.periods.add(r.period);if(r.purpose)x.purposes.add(r.purpose);if(r.detail)x.details.push(String(r.detail));x.referenceOnly=/校核|核对/.test(r.status||'')&&!/已接入/.test(r.status||'');}
   if(k==='history'){if(r.purpose)x.purposes.add(r.purpose);if(r.sheet&&r.sheet!=='见源表')x.sheets.add(r.sheet);}
  }}
- return [...map.values()].map(x=>({...x,periods:[...x.periods],purposes:[...x.purposes],sheets:[...x.sheets],referenceOnly:!x.counts.facts&&!x.counts.novRoster&&!x.counts.novChannels}));
+ return [...map.values()].map(x=>({...x,periods:[...x.periods],purposes:[...x.purposes].map(p=>p==='performanceAnnual'?'分角色累计业绩':p),sheets:[...x.sheets],referenceOnly:!x.counts.facts&&!x.counts.novRoster&&!x.counts.novChannels}));
 };
 H.planSourceRemoval=(file,data=H.data)=>{
  const info=H.sourceList(data).find(x=>x.file===file);if(!info)throw Error('该来源已不存在，请刷新列表');

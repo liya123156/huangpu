@@ -25,6 +25,7 @@ jobs:
           node tests/leaderboard.test.cjs
           node tests/xlsx-large.test.cjs
           node tests/weekly-model.test.cjs
+          node tests/weekly-reload.test.cjs
           node tests/weekly-import.test.cjs
           node tests/performance-import.test.cjs
       - name: Package static app (code only)

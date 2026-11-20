@@ -33,3 +33,13 @@ const manyCells=c.HP.xlsxTableBuilder();manyCells.dataCells=2000000;
 assert.equal(manyCells.append(1,[]),false);
 assert.throws(()=>manyCells.append(2,[0]),/2,000,000/);
 console.log('PASS: large/sparse XLSX tables skip blank formatting, retain original row numbers and zeros, and enforce effective-data limits.');
+// Parsing should remain responsive without a background-tab setTimeout chain.
+(async()=>{
+ c.setTimeout=()=>{throw new Error('XLSX import must not depend on timer callbacks')};
+ let schedulerCalls=0;c.scheduler={yield:()=>{schedulerCalls++;return Promise.resolve()}};
+ await c.HP.xlsxYield();assert.equal(schedulerCalls,1);
+ delete c.scheduler;c.MessageChannel=require('node:worker_threads').MessageChannel;
+ await Promise.all([c.HP.xlsxYield(),c.HP.xlsxYield()]);
+ delete c.MessageChannel;await c.HP.xlsxYield();
+ console.log('PASS: XLSX work yields through scheduler/MessageChannel, closes its ports, and requires no throttled timers.');
+})().catch(e=>{console.error(e);process.exitCode=1});

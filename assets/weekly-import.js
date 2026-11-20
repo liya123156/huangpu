@@ -235,7 +235,7 @@ H.finishImport=async()=>{
    for(const row of r.roster){const key=row.personId||[row.store,row.group,row.person].join('|');if(!roster.has(key)||!q.preserveExistingRoster)roster.set(key,row);}
    for(const f of r.flows||[])flows.set(JSON.stringify([f.store,f.group,f.personId||f.person,f.estate,f.business,f.start,f.end]),f);
    for(const issue of r.issues)issues.set(JSON.stringify([issue.sourceFile||issue.source,issue.sourceSheet||'',issue.row,issue.type||'']),issue);
-   const purpose=H.annualKinds[q.kind]||q.importPurpose||q.kind;
+   const purpose=q.kindLabel||H.annualKinds[q.kind]||q.importPurpose||q.kind;
    if(!next.history.some(x=>x.hash===q.hash&&x.sheet===q.sheet))next.history.push({id:H.id(),file:q.file,sheet:q.sheet,hash:q.hash,purpose,start:q.start,end:q.end,periodType:q.periodType,at:new Date().toISOString(),rowCount:r.rowCount,check:r.check});
    next.novAudit=next.novAudit.filter(x=>!(x.file===q.file&&x.sheet===q.sheet));
    next.novAudit.push({file:q.file,sheet:q.sheet,purpose,period:q.periodSummary||(q.start+'—'+q.end),status:r.referenceOnly?'校核，不重复计数':'已接入',rows:r.rowCount,detail:q.importNote||JSON.stringify(r.check||{})});

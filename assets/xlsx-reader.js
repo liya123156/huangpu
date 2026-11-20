@@ -25,6 +25,17 @@ H.xlsxTableBuilder=()=>({rows:[],rowNumbers:[],dataCells:0,
   this.rows.push(values.slice(0,last+1));this.rowNumbers.push(rowNumber);this.dataCells+=count;return true;
  }
 });
+// Yield a bounded import task without chaining timers. Hidden browser tabs can
+// throttle setTimeout chains to one callback per minute.
+H.xlsxYield=()=>{
+ if(typeof globalThis.scheduler?.yield==='function')return globalThis.scheduler.yield();
+ if(typeof globalThis.MessageChannel==='function')return new Promise(resolve=>{
+  const channel=new globalThis.MessageChannel();
+  channel.port1.onmessage=()=>{channel.port1.onmessage=null;channel.port1.close();channel.port2.close();resolve();};
+  channel.port2.postMessage(null);
+ });
+ return Promise.resolve();
+};
 H.readXlsx=async (buffer,options={})=>{
  const bytes=new Uint8Array(buffer),view=new DataView(buffer),decoder=new TextDecoder();let tail=-1;
  for(let i=bytes.length-22;i>=Math.max(0,bytes.length-65557);i--)if(view.getUint32(i,true)===0x06054b50){tail=i;break}
@@ -50,12 +61,12 @@ H.readXlsx=async (buffer,options={})=>{
  for(const r of els(relations,'Relationship')){if(r.getAttribute('TargetMode')==='External')continue;const target=r.getAttribute('Target');const parts=(target.startsWith('/')?target.slice(1):'xl/'+target).split('/'),out=[];for(const p of parts)if(p==='..')out.pop();else if(p&&p!=='.')out.push(p);paths.set(r.getAttribute('Id'),out.join('/'))}
  const sharedXML=await text('xl/sharedStrings.xml'),shared=sharedXML?els(doc(sharedXML),'si').map(s=>els(s,'t').map(t=>t.textContent).join('')):[];
  const date1904=['1','true'].includes(els(book,'workbookPr')[0]?.getAttribute('date1904')),sheets=[],bookSheets=els(book,'sheet');let workbookCells=0;
- const report=async info=>{if(typeof options.onProgress==='function')options.onProgress(info);if(typeof setTimeout==='function')await new Promise(resolve=>setTimeout(resolve,0))};
+ const report=async info=>{if(typeof options.onProgress==='function')options.onProgress(info);await H.xlsxYield();};
  for(let si=0;si<bookSheets.length;si++){
   const sheet=bookSheets[si],name=sheet.getAttribute('name')||'工作表';
   const id=sheet.getAttribute('r:id')||sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id'),path=paths.get(id);if(!path)continue;
   await report({sheet:name,index:si+1,total:bookSheets.length,processedRows:0,dataRows:0});
-  const xml=doc(await text(path)),table=H.xlsxTableBuilder();let nextRow=0,processedRows=0;
+  const xml=doc(await text(path)),table=H.xlsxTableBuilder();let nextRow=0,processedRows=0,lastYieldRows=0,lastYieldCells=0;
   for(const row of els(xml,'row')){
    const ri=row.hasAttribute('r')?Number(row.getAttribute('r'))-1:nextRow;nextRow=ri+1;const values=[];let nextCol=0;
    for(const cell of els(row,'c')){
@@ -68,7 +79,10 @@ H.readXlsx=async (buffer,options={})=>{
     else if(col<300)values[col]=parsed;
    }
    table.append(ri+1,values);processedRows++;
-   if(processedRows%1000===0)await report({sheet:name,index:si+1,total:bookSheets.length,processedRows,dataRows:table.rows.length});
+   if(table.dataCells-lastYieldCells>=12000||processedRows-lastYieldRows>=8192){
+    lastYieldRows=processedRows;lastYieldCells=table.dataCells;
+    await report({sheet:name,index:si+1,total:bookSheets.length,processedRows,dataRows:table.rows.length});
+   }
   }
   workbookCells+=table.dataCells;if(workbookCells>4000000)throw Error('工作簿有效数据超过4,000,000个单元格');
   if(table.rows.length)sheets.push({name,rows:table.rows,rowNumbers:table.rowNumbers,date1904});

@@ -105,4 +105,15 @@ H.renderActivity=()=>{
 };
 const render=H.render;
 H.render=()=>{render();const badge=document.querySelector('.topbar .pill');if(badge)badge.textContent='组织管理版 V3.4';};
+// A reload must keep the last imported calendar month complete, rather than cut
+// weekly/monthly totals at today's date through the legacy initial batch range.
+const init=H.init;
+H.init=async()=>{
+ await init();
+ const dates=H.data.facts.filter(f=>f.category==='activity'&&['weekly','monthly'].includes(f.periodType)&&H.date(f.start)&&H.date(f.end)&&f.start<=f.end).map(f=>f.periodType==='weekly'&&H.weekMonth()==='end'?f.end:f.start).sort();
+ if(!dates.length)return;
+ const anchor=dates.at(-1);
+ H.ui.leaderboard={...(H.ui.leaderboard||{}),mode:'month',anchor,level:H.ui.leaderboard?.level||'both',role:H.ui.leaderboard?.role||'顾问',metrics:H.ui.leaderboard?.metrics||null};
+ H.setCalendar('month',anchor);
+};
 })();
