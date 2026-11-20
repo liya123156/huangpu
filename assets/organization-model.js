@@ -72,5 +72,5 @@ H.buildOrgAnalysis=(level=H.ui.focusLevel)=>{
 };
 H.focusClass=e=>{const x=H.buildOrgAnalysis(e.level==='group'?'group':'person').items.find(x=>H.key(x.entity)===H.key(e));return x||{key:'pending',reason:'不在当前同层级／同岗位比较范围'};};
 H.orgSnapshot=(items,analysis)=>({rule:H.clone(analysis.rule),scope:analysis.scope,selectedStart:H.ui.start,selectedEnd:H.ui.end,periods:H.clone(analysis.periods),createdAt:new Date().toISOString(),objects:items.map(x=>({entity:H.clone(x.entity),quadrant:x.key,performance:x.performance,activityScore:x.score??null,rankFirst:x.rankFirst??null,rankLast:x.rankLast??null,rankCount:x.rankCount??null,reason:x.reason,activities:(x.parts||[]).map(p=>({...p})),sources:[...new Set([...(x.perf?.rows||[]),...x.activities.flatMap(v=>v.rows||[])].map(f=>f.source||'已导入底表'))]}))});
-H.orgRuleText=()=>{const r=H.orgRules(),m=H.meta(r.perfMetric);return '高绩效：'+m.label+(r.perfOperator==='gt'?' > ':' ≥ ')+r.perfThreshold+(m.unit||'')+'；高活动量：前'+r.topPercent+'%；活动指标：'+r.activities.map(a=>H.meta(a.id).label+'（权重'+a.weight+'）').join('＋')};
+H.orgRuleText=(r=H.orgRules())=>{const m=H.meta(r.perfMetric);return '高绩效：'+m.label+(r.perfOperator==='gt'?' > ':' ≥ ')+r.perfThreshold+(m.unit||'')+'；高活动量：前'+r.topPercent+'%；活动指标：'+r.activities.map(a=>H.meta(a.id).label+'（权重'+a.weight+'）').join('＋')};
 })();
