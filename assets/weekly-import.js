@@ -7,7 +7,8 @@ H.importStores=['新天地一店','新天地二店','黄浦滨江店','复兴香
 H.storeFromGroup=group=>String(group||'').trim().replace(/[A-Za-zＡ-Ｚａ-ｚ0-9]+组$/,'');
 H.importDate=(value,date1904=false)=>H.date(date1904&&typeof value==='number'?value+1462:value);
 H.addDays=(date,n)=>new Date(new Date(date+'T00:00:00Z').getTime()+n*DAY).toISOString().slice(0,10);
-H.annualKinds={weeklyHouse:'每周房源新增',weeklyMeet:'每周业主面见',weeklyChannel:'每周重点渠道',weeklyMedia:'每周自媒体上户',monthlyHmall:'每月 Hmall 陪带',undatedViewing:'带看汇总（日期待补）'};
+H.annualKinds={weeklyHouse:'每周房源新增',weeklyMeet:'每周业主面见',weeklyChannel:'每周重点渠道',weeklyMedia:'每周自媒体上户',weeklyViewing:'每周买卖带看',monthlyHmall:'每月 Hmall 陪带',undatedViewing:'带看汇总（日期待补）'};
+H.viewingField=headers=>headers.find(h=>['[A] 买卖带看次数','买卖带看次数'].includes(String(h??'').trim()));
 H.annualMetricDefs=[
  {id:'hmallassist',g:'house',label:'Hmall陪带量',unit:'次',kind:'number',note:'按陪带员工归属累计带看次数，不使用实际带看人或房源套数代替。'},
  {id:'channelWeekEntered',g:'customer',label:'重点渠道当周进入带看',unit:'原表量',kind:'number'},
@@ -41,12 +42,13 @@ H.prepare=(sheet,file,hash)=>{
   else if(r.includes('行为时间')&&r.includes('[A] 业主面见'))kind='weeklyMeet';
   else if(r.includes('行为时间')&&r.includes('重点渠道当周进入带看'))kind='weeklyChannel';
   else if(r.includes('行为时间')&&r.includes('自媒体上户量'))kind='weeklyMedia';
-  else if(r.includes('实际带看人')&&r.includes('[A] 买卖带看次数'))kind='undatedViewing';
+  else if(r.includes('实际带看人')&&H.viewingField(r))kind=r.includes('行为时间')?'weeklyViewing':'undatedViewing';
   if(kind){header=i;break;}
  }
  if(!kind)return q;
  Object.assign(q,{annual:true,kind,header,category:'activity',includeOtherStores:false,observedThrough:H.today(),periodVerified:kind!=='undatedViewing',periodType:kind==='monthlyHmall'?'monthly':kind==='undatedViewing'?'range':'weekly'});
- const rows=sheet.rows.slice(header+1),h=sheet.rows[header],dates=[];
+ const rows=sheet.rows.slice(header+1),h=sheet.rows[header].map(x=>String(x??'').trim()),dates=[];
+ if(['weeklyViewing','undatedViewing'].includes(kind))q.viewField=H.viewingField(sheet.rows[header]);
  for(const r of rows){
   if(kind==='monthlyHmall'){
    const m=String(r[h.indexOf('月份')]||'').match(/^(\d{4})-(\d{1,2})$/);
@@ -57,7 +59,14 @@ H.prepare=(sheet,file,hash)=>{
  else if(kind==='undatedViewing'){q.start='';q.end='';}
  q.periodCount=new Set(dates.map(x=>x.join('|'))).size;
  q.periodSummary=kind==='undatedViewing'?'原表没有日期，请补选统计起止':kind==='monthlyHmall'?q.periodCount+'个月份；'+q.start.slice(0,7)+'—'+q.end.slice(0,7):q.periodCount+'个周标；'+q.start+'—'+(dates.map(x=>x[0]).sort().at(-1)||'');
- q.importNote=kind==='monthlyHmall'?'按月份累计，不能拆成周；仅纳入源表标注黄浦大区的陪带员工。':kind==='weeklyChannel'?'新增总数使用原表总列；当周进入带看率重新用分子÷分母计算。':kind==='undatedViewing'?'不会根据文件名或上传时间猜测日期。':'行为时间为周开始；月度按完整周累计，缺少记录不补0。';
+ q.importNote=kind==='monthlyHmall'?'按月份累计，不能拆成周；仅纳入源表标注黄浦大区的陪带员工。':kind==='weeklyChannel'?'新增总数使用原表总列；当周进入带看率重新用分子÷分母计算。':kind==='undatedViewing'?'不会根据文件名或上传时间猜测日期。':kind==='weeklyViewing'?'按行为时间逐周导入买卖带看次数；保留原表0值和历史店组。跨月／跨年周按看板归属规则累计，源表合计与所选年度可能不同。':'行为时间为周开始；月度按完整周累计，缺少记录不补0。';
+ if(kind==='weeklyViewing'){
+  const range=String(file).match(/(\d{4}-\d{2}-\d{2})至(\d{4}-\d{2}-\d{2})/);
+  if(range&&H.date(range[1])&&H.date(range[2])&&range[1]<=range[2]){
+   q.sourceFilterStart=range[1];q.sourceFilterEnd=range[2];q.observedThrough=[H.today(),range[2]].sort()[0];
+   q.importNote='文件声明筛选范围：'+range[1]+'—'+range[2]+'；保留源表周标，不拆分或裁剪跨边界周。'+q.importNote;
+  }
+ }
  q.signature=JSON.stringify([kind,h]);return q;
 };
 // Compact XLSX rows retain original row numbers, including generic imports.
@@ -121,8 +130,9 @@ H.normalize=q=>{
  const undated=q.kind==='undatedViewing'&&!H.annualPeriod(q);
  if(undated&&(q.start||q.end)){out.errors.push('请同时填写真实的统计开始和结束日期；也可留空保存为待补日期。');return out;}
  if(undated){out.referenceOnly=true;out.check.datePending=true;}
- const catalog=H.importCatalog(),h=q.rows[q.header],ci=k=>h.indexOf(k),groups=new Map(),events=new Map(),undatedSeen=new Map();
- const src={category:'activity',source:q.file+' / '+q.sheet,sourceFile:q.file,sourceSheet:q.sheet,sourceHash:q.hash,observedThrough:q.observedThrough||H.today()};
+ const catalog=H.importCatalog(),h=q.rows[q.header],ci=k=>h.findIndex(v=>String(v??'').trim()===String(k??'').trim()),viewField=q.viewField||H.viewingField(h),groups=new Map(),events=new Map(),undatedSeen=new Map();
+ const src={category:'activity',source:q.file+' / '+q.sheet,sourceFile:q.file,sourceSheet:q.sheet,sourceHash:q.hash,sourceKind:q.kind,observedThrough:q.observedThrough||H.today()};
+ if(q.sourceFilterStart&&q.sourceFilterEnd){src.sourceFilterStart=q.sourceFilterStart;src.sourceFilterEnd=q.sourceFilterEnd;}
  const put=(e,p,metric,raw,row,field,extra={},additive=false)=>{
   const n=H.num(raw);if(n===null)return;
   if(!Number.isFinite(n)||n<0){out.errors.push('第'+row+'行 '+field+'不是有效的非负数');return;}
@@ -141,7 +151,7 @@ H.normalize=q=>{
   if([group,person].some(s=>/^(?:合计|总计|小计|Total)$/i.test(s))){out.check.summaryRows=(out.check.summaryRows||0)+1;continue;}
   if(!group||!person||person==='undefined'){out.issues.push({...src,row:r.row,store,group,person:person==='undefined'?'':person,type:'identity-missing',detail:'缺少姓名或店组，未分配给个人'});continue;}
   if(!H.importStores.includes(store)&&!q.includeOtherStores){out.check.outsideStore++;out.issues.push({...src,row:r.row,store,group,person,type:'outside-scope',values:v,detail:'未纳入当前黄浦四店；原始记录保留待核对历史归属'});continue;}
-  if(undated){const amount=H.num(v[ci('[A] 买卖带看次数')]),key=JSON.stringify([store,group,person]);if(undatedSeen.has(key)){if(undatedSeen.get(key)!==amount)out.errors.push('第'+r.row+'行同一人的无日期带看汇总值冲突');else out.check.duplicates++;continue;}undatedSeen.set(key,amount);if(amount!==null&&Number.isFinite(amount)&&amount>=0){out.issues.push({...H.annualIdentity(store,group,person,'',catalog),...src,row:r.row,type:'undated-activity',metric:'view',value:amount,sourceField:'[A] 买卖带看次数',detail:'原表没有统计日期，已保存，暂不计入周／月／年'});out.check.view=(out.check.view||0)+amount;out.rowCount++;}else if(amount!==null)out.errors.push('第'+r.row+'行带看量无效');continue;}
+  if(undated){const amount=H.num(v[ci(viewField)]),key=JSON.stringify([store,group,person]);if(undatedSeen.has(key)){if(undatedSeen.get(key)!==amount)out.errors.push('第'+r.row+'行同一人的无日期带看汇总值冲突');else out.check.duplicates++;continue;}undatedSeen.set(key,amount);if(amount!==null&&Number.isFinite(amount)&&amount>=0){out.issues.push({...H.annualIdentity(store,group,person,'',catalog),...src,row:r.row,type:'undated-activity',metric:'view',value:amount,sourceField:viewField,detail:'原表没有统计日期，已保存，暂不计入周／月／年'});out.check.view=(out.check.view||0)+amount;out.rowCount++;}else if(amount!==null)out.errors.push('第'+r.row+'行带看量无效');continue;}
   const p=H.annualPeriod(q,hm?v[ci('月份')]:v[ci('行为时间')]);
   if(!p){out.errors.push('第'+r.row+'行日期无效');continue;}
   if(p.periodType==='weekly'&&new Date(p.start+'T00:00:00Z').getUTCDay()!==1){out.errors.push('第'+r.row+'行周开始不是周一，请核对行为时间口径');continue;}
@@ -156,7 +166,7 @@ H.normalize=q=>{
    if(Number.isFinite(den)&&Number.isFinite(num)&&den>=0&&num>=0)put(e,p,'channelWeekRate',den>0?num/den*100:0,r.row,'当周进入带看/重点渠道新增',{numerator:num,denominator:den});
    for(const field of ['网络','短彩微','陌拜','老客户、上门','盘户转化']){const n=H.num(v[ci(field)]);if(n!==null&&Number.isFinite(n))out.channels.push({...e,...src,...p,channel:field,new:n,row:r.row,sourceField:field});}
   }else{
-   const [metric,field]=q.kind==='weeklyHouse'?['newhouse','[A] 新增房-买卖']:q.kind==='weeklyMeet'?['ownermeet','[A] 业主面见']:q.kind==='weeklyMedia'?['media','自媒体上户量']:['view','[A] 买卖带看次数'];
+   const [metric,field]=q.kind==='weeklyHouse'?['newhouse','[A] 新增房-买卖']:q.kind==='weeklyMeet'?['ownermeet','[A] 业主面见']:q.kind==='weeklyMedia'?['media','自媒体上户量']:['view',viewField];
    put(e,p,metric,v[ci(field)],r.row,field);
   }
   out.rowCount++;
@@ -184,8 +194,8 @@ H.readFiles=async files=>{
    H.ui.queue=H.ui.queue.filter(q=>!(q.file===file.name&&q.status==='error'));
    let sheets;
    if(/\.xlsx$/i.test(file.name))sheets=await H.readXlsx(bytes,{onProgress:i=>progress('读取子表 '+i.index+'/'+i.total+'：'+i.sheet+' · '+i.dataRows+'行')});
-   else if(/\.(csv|tsv|txt)$/i.test(file.name)){let txt=new TextDecoder().decode(bytes);if(txt.includes('\ufffd'))txt=new TextDecoder('gb18030').decode(bytes);sheets=[{name:'文本表',rows:H.csv(txt)}];}
-   else throw Error('支持.xlsx、CSV、TSV、图片及JSON数据包');
+   else if(/\.(csv|tsv|txt)$/i.test(file.name)){let txt=new TextDecoder().decode(bytes);if(txt.includes('\ufffd'))txt=new TextDecoder('gb18030').decode(bytes);sheets=[{name:'文本表',...H.parseTextTable(txt)}];}
+   else throw Error('支持.xlsx、CSV、TSV、TXT、图片及JSON数据包');
    for(const sheet of sheets)H.ui.queue.push(H.prepare(sheet,file.name,hash));
   }catch(e){H.ui.queue.push({id:H.id(),file:file.name,sheet:'',status:'error',error:e.message});}
  }}finally{H.ui.reading=false;H.ui.readProgress='';H.render();H.toast('已读取各子表；可一键核对日期明确的表');}
@@ -209,21 +219,60 @@ H.loadVerifiedImport=(data,file)=>{
  H.ui.queue.push(...prepared);
 };
 H.overlappingSnapshots=incoming=>H.data.facts.filter(old=>!['weekly','monthly','rolling30'].includes(old.periodType)&&incoming.some(f=>['weekly','monthly'].includes(f.periodType)&&f.category===old.category&&f.metric===old.metric&&H.same(f,old)&&f.start<=old.end&&f.end>=old.start));
+// A new dated export can replace an entire pending source only after every
+// scoped person matches and every person has the same complete weekly grid.
+// Totals alone (or a sparse positive-only export) are insufficient evidence.
+H.matchUndatedViewing=stage=>{
+ const scopeKey=r=>JSON.stringify([r.store||'',r.group||'',r.person||'']),oldSources=new Map(),matches=[],knownIds=new Map();
+ for(const record of [...H.importCatalog(),...H.data.facts,...H.data.novUnassigned])if(record.person&&record.personId){const key=scopeKey(record);if(!knownIds.has(key))knownIds.set(key,new Set());knownIds.get(key).add(record.personId);}
+ for(const row of H.data.novUnassigned||[]){
+  if(row.type!=='undated-activity'||row.metric!=='view')continue;
+  const key=JSON.stringify([H.sourceFile(row,'novUnassigned'),row.sourceSheet||row.source||'']);
+  if(!oldSources.has(key))oldSources.set(key,[]);oldSources.get(key).push(row);
+ }
+ for(const oldRows of oldSources.values()){
+  if(oldRows.length<2||oldRows.some(r=>!r.person||!r.group||!Number.isFinite(r.value)||r.value<0))continue;
+  const old=new Map(oldRows.map(r=>[scopeKey(r),r]));if(old.size!==oldRows.length)continue;
+  for(const {q,r}of stage){
+   if(r.errors.length||r.issues.some(i=>i.type==='identity-missing')||!(q.kind==='weeklyViewing'||q.kind==='verifiedPackage'))continue;
+   const rows=r.facts.filter(f=>f.level==='person'&&f.metric==='view'&&f.periodType==='weekly'&&(q.kind==='weeklyViewing'||f.sourceKind==='weeklyViewing'));
+   if(!rows.length||r.rowCount!==rows.length+(r.check.duplicates||0))continue;
+   const periods=[...new Set(rows.map(f=>f.start))].sort();
+   if(periods.length<2||q.periodCount&&q.periodCount!==periods.length||periods.some((d,i)=>i&&H.addDays(periods[i-1],7)!==d))continue;
+   const people=new Map();let valid=true;
+   for(const f of rows){
+    const key=scopeKey(f);if(!people.has(key))people.set(key,{value:0,periods:new Set(),ids:new Set()});const p=people.get(key);
+    if(p.periods.has(f.start)||!Number.isFinite(f.value)||f.value<0||f.end!==H.addDays(f.start,6)){valid=false;break;}
+    p.value+=f.value;p.periods.add(f.start);if(f.personId)p.ids.add(f.personId);
+   }
+   if(!valid||people.size!==old.size)continue;
+   for(const [key,before]of old){const after=people.get(key);if(!after||after.periods.size!==periods.length||after.ids.size>1||before.personId&&after.ids.size&&!after.ids.has(before.personId)||!(before.personId&&after.ids.size)&&knownIds.get(key)?.size>1||Math.abs(before.value-after.value)>1e-8){valid=false;break;}}
+   if(!valid)continue;
+   matches.push({file:H.sourceFile(oldRows[0],'novUnassigned'),sheet:oldRows[0].sourceSheet||'',rows:oldRows,people:old.size,periods:periods.length,start:periods[0],end:H.addDays(periods.at(-1),6),total:oldRows.reduce((sum,row)=>sum+row.value,0),replacement:{file:q.file,sheet:q.sheet,hash:q.hash}});break;
+  }
+ }
+ return matches;
+};
 H.commitImports=()=>{
  const qs=H.ui.queue.filter(q=>q.status==='ready');if(!qs.length){H.toast('请先核对底表');return;}H.refreshPendingRoster();
  const stage=qs.map(q=>({q,r:H.normalize(q)})),errors=stage.flatMap(x=>x.r.errors),facts=new Map(),channels=new Map();
  for(const {r}of stage){for(const f of r.facts){const k=H.factKey(f),old=facts.get(k);if(old&&Math.abs(old.value-f.value)>1e-8&&!f.derivedFromAnnualPeople&&!old.derivedFromAnnualPeople)errors.push('本次不同来源存在不同值：'+(f.person||f.group||f.store||'大区')+' / '+H.meta(f.metric).label);else facts.set(k,f);}for(const c of r.channels||[])channels.set(JSON.stringify([c.store,c.group,c.personId||c.person,c.channel,c.start,c.end]),c);}
  if(errors.length){H.modal('先处理导入问题','<div class="notice warn">'+errors.slice(0,20).map(E).join('<br>')+'</div>');return;}
  const list=[...facts.values()],oldMap=new Map(H.data.facts.map(f=>[H.factKey(f),f])),changed=list.filter(f=>!f.derivedFromAnnualPeople&&oldMap.has(H.factKey(f))&&Math.abs(oldMap.get(H.factKey(f)).value-f.value)>1e-8),retire=H.overlappingSnapshots(list);
- H.pendingImport={stage,facts:list,channels:[...channels.values()],retire};
+ const retireUndated=H.matchUndatedViewing(stage);
+ H.pendingImport={stage,facts:list,channels:[...channels.values()],retire,retireUndated};
  const sources=[...new Set(retire.map(f=>H.sourceFile(f,'facts')))];
- H.modal('确认入表',`<p><b>${qs.length}张子表</b>；${list.filter(f=>!f.derivedFromAnnualPeople).length}项原始指标；${stage.reduce((s,x)=>s+x.r.roster.length,0)}条人员资料。</p><div class="notice">本次追加合并，同一人、同一指标、同一周只保留一份。店组和门店根据人员数据自动累计；空白不补0。</div>${changed.length?`<p>${changed.length}项与已保存的同周期数值不同，确认后更新为本批次。</p>`:''}${retire.length?`<div class="notice warn weekly-overlap"><b>发现${retire.length}项旧累计与本批次周／月数据重叠。</b><p>${sources.map(E).join('；')}</p><label class="flex"><input id="retire-overlap" type="checkbox" checked>以本批次周／月明细为准，重叠旧指标移入回收记录</label><small>只移动重叠指标；其他数据、表头和待办保留。可在数据导入的回收记录恢复。</small></div>`:''}<p class="subtle">没有日期的记录保留待补；未明确的管理者业绩单独展示。确认后更新活动量与分析看板。</p>`,`<button class="btn" onclick="HP.close()">取消</button><button class="btn primary" onclick="HP.finishImport()">确认合并并更新看板</button>`);
+ H.modal('确认入表',`<p><b>${qs.length}张子表</b>；${list.filter(f=>!f.derivedFromAnnualPeople).length}项原始指标；${stage.reduce((s,x)=>s+x.r.roster.length,0)}条人员资料。</p><div class="notice">本次追加合并，同一人、同一指标、同一周只保留一份。店组和门店根据人员数据自动累计；空白不补0。</div>${changed.length?`<p>${changed.length}项与已保存的同周期数值不同，确认后更新为本批次。</p>`:''}${retire.length?`<div class="notice warn weekly-overlap"><b>发现${retire.length}项旧累计与本批次周／月数据重叠。</b><p>${sources.map(E).join('；')}</p><label class="flex"><input id="retire-overlap" type="checkbox" checked>以本批次周／月明细为准，重叠旧指标移入回收记录</label><small>只移动重叠指标；其他数据、表头和待办保留。可在数据导入的回收记录恢复。</small></div>`:''}${retireUndated.length?`<div class="notice weekly-overlap"><b>已逐人、逐店组核对 ${retireUndated.reduce((n,x)=>n+x.people,0)} 条旧待补带看。</b><p>${retireUndated.map(x=>`${E(x.file)} / ${E(x.sheet)}：${x.people}条人员店组记录的原累计均与${x.periods}周明细相等（合计${H.fmt(x.total)}次），每个对象均有完整周记录。`).join('<br>')}</p><label class="flex"><input id="retire-undated-view" type="checkbox" checked>使用本次有日期的带看明细，已核对的旧待补记录移入回收记录</label><small>按整个旧来源匹配；不根据文件名推测日期。旧原数仍可恢复，未匹配的待补记录保留。</small></div>`:''}<p class="subtle">未匹配且没有日期的记录保留待补；未明确的管理者业绩单独展示。确认后更新活动量与分析看板。</p>`,`<button class="btn" onclick="HP.close()">取消</button><button class="btn primary" onclick="HP.finishImport()">确认合并并更新看板</button>`);
 };
 // Transactional additive import: rollback memory if IndexedDB cannot save.
 H.finishImport=async()=>{
  const p=H.pendingImport;if(!p||H.ui.committing)return;H.ui.committing=true;
  try{
   const next=H.clone(H.data),retired=p.retire?.length&&document.getElementById('retire-overlap')?.checked?p.retire:[],retireKeys=new Set(retired.map(H.factKey));
+  const undatedKey=r=>JSON.stringify([r.sourceFile||r.source,r.sourceSheet||'',r.row,r.type||'',r.metric,r.value,r.person,r.group]);
+  const matchedUndated=document.getElementById('retire-undated-view')?.checked?p.retireUndated||[]:[],retiredUndatedKeys=new Set(matchedUndated.flatMap(x=>x.rows.map(undatedKey)));
+  next.novUnassigned=next.novUnassigned.filter(r=>!retiredUndatedKeys.has(undatedKey(r)));
+  for(const match of matchedUndated)next.sourceTrash.push({id:H.id(),file:match.file,deletedAt:new Date().toISOString(),info:{counts:{novUnassigned:match.rows.length}},removed:{novUnassigned:H.clone(match.rows)},reason:'完整周明细逐人、逐店组对账一致，替换旧无日期带看',replacementSource:match.replacement,matchedPeople:match.people,matchedWeeks:match.periods});
   const map=new Map(next.facts.filter(f=>!f.derivedFromAnnualPeople&&!retireKeys.has(H.factKey(f))).map(f=>[H.factKey(f),f]));for(const f of p.facts)if(!f.derivedFromAnnualPeople)map.set(H.factKey(f),f);next.facts=[...map.values()];
   for(const file of [...new Set(retired.map(f=>H.sourceFile(f,'facts')))]){const rows=retired.filter(f=>H.sourceFile(f,'facts')===file);next.sourceTrash.push({id:H.id(),file,deletedAt:new Date().toISOString(),info:{counts:{activityFacts:rows.length}},removed:{facts:H.clone(rows)},reason:'以新周／月明细替换重叠旧累计'});}
   const channelKey=c=>JSON.stringify([c.store,c.group,c.personId||c.person,c.channel,c.start,c.end]);
@@ -241,7 +290,7 @@ H.finishImport=async()=>{
    next.novAudit.push({file:q.file,sheet:q.sheet,purpose,period:q.periodSummary||(q.start+'—'+q.end),status:r.referenceOnly?'校核，不重复计数':'已接入',rows:r.rowCount,detail:q.importNote||JSON.stringify(r.check||{})});
    if(q.signature&&q.mapping?.length)next.presets[q.signature]={mapping:q.mapping,multiplier:q.multiplier};
   }
-  next.novRoster=[...roster.values()];next.novUnassigned=[...issues.values()];next.flowFacts=[...flows.values()];
+  next.novRoster=[...roster.values()];next.novUnassigned=[...issues.values()].filter(r=>!retiredUndatedKeys.has(undatedKey(r)));next.flowFacts=[...flows.values()];
   H.reconcileImportIdentities(next);
   const datedViewRows=new Set(p.facts.filter(f=>f.metric==='view').map(f=>JSON.stringify([f.sourceFile,f.sourceSheet,f.row])));
   next.novUnassigned=next.novUnassigned.filter(r=>r.type!=='undated-activity'||!datedViewRows.has(JSON.stringify([r.sourceFile,r.sourceSheet,r.row])));

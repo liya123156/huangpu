@@ -3,7 +3,42 @@
 (() => {
 const H=HP,E=H.esc;
 H.hash=async buffer=>{if(crypto.subtle){const b=await crypto.subtle.digest('SHA-256',buffer);return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}let a=2166136261;for(const b of new Uint8Array(buffer))a=Math.imul(a^b,16777619);return buffer.byteLength+'-'+(a>>>0)};
-H.csv=text=>{text=text.replace(/^\uFEFF/,'');const first=text.split(/\r?\n/).find(x=>x.trim())||'',delimiter=first.includes('\t')?'\t':((first.match(/;/g)||[]).length>(first.match(/,/g)||[]).length?';':',');let rows=[],row=[],cell='',quoted=false;for(let i=0;i<text.length;i++){const c=text[i];if(c==='"'){if(quoted&&text[i+1]==='"'){cell+='"';i++}else if(!cell||quoted)quoted=!quoted;else cell+=c}else if(c===delimiter&&!quoted){row.push(cell);cell=''}else if((c==='\n'||c==='\r')&&!quoted){if(c==='\r'&&text[i+1]==='\n')i++;row.push(cell);if(row.some(v=>v.trim()))rows.push(row);row=[];cell=''}else cell+=c}if(quoted)throw Error('CSV引号未闭合');if(cell||row.length){row.push(cell);if(row.some(v=>v.trim()))rows.push(row)}if(rows.length>20001)throw Error('单张表超过20,000行');return rows};
+// Excel can copy a million empty formatted rows into a TSV. Only meaningful
+// records count toward limits; compact rows still retain their physical origin.
+H.parseTextTable=text=>{
+ text=String(text).replace(/^\uFEFF/,'').replace(/(?:\r\n|\r|\n)[\t \r\n]*$/,'\n');
+ const first=text.match(/[^\r\n]*[^\s\r\n][^\r\n]*/)?.[0]||'',delimiter=first.includes('\t')?'\t':((first.match(/;/g)||[]).length>(first.match(/,/g)||[]).length?';':',');
+ const rows=[],rowNumbers=[];let row=[],cell='',quoted=false,line=1,rowStart=1,cells=0,characters=0;
+ const finishRow=()=>{
+  row.push(cell);cell='';
+  if(row.some(v=>v.trim())){
+   const last=row.findLastIndex(v=>v.trim());
+   if(last>=300)throw Error('文本表有效数据超过300列');
+   row.length=last+1;
+   for(const value of row)if(value.trim()){cells++;characters+=value.length;}
+   if(cells>2000000||characters>25*1024*1024)throw Error('文本表有效内容超过限制');
+   rows.push(row);rowNumbers.push(rowStart);
+   if(rows.length>20001)throw Error('单张表有效数据超过20,000行');
+  }
+  row=[];
+ };
+ for(let i=0;i<text.length;i++){
+  const ch=text[i];
+  if(ch==='"'){
+   if(quoted&&text[i+1]==='"'){cell+='"';i++;}
+   else if(!cell||quoted)quoted=!quoted;else cell+=ch;
+  }else if(ch===delimiter&&!quoted){row.push(cell);cell='';}
+  else if(ch==='\n'||ch==='\r'){
+   const crlf=ch==='\r'&&text[i+1]==='\n';
+   if(quoted){cell+=crlf?'\r\n':ch;}else finishRow();
+   if(crlf)i++;line++;if(!quoted)rowStart=line;
+  }else cell+=ch;
+ }
+ if(quoted)throw Error('CSV引号未闭合');
+ if(cell||row.length)finishRow();
+ return {rows,rowNumbers};
+};
+H.csv=text=>H.parseTextTable(text).rows;
 const xml=s=>{const d=new DOMParser().parseFromString(s,'application/xml');if(d.querySelector('parsererror'))throw Error('Excel XML结构无法读取');return d},els=(e,n)=>[...e.getElementsByTagNameNS('*',n)];
 H.readXlsx=async buffer=>{const b=new Uint8Array(buffer),v=new DataView(buffer);let tail=-1;for(let i=b.length-22;i>=Math.max(0,b.length-65557);i--)if(v.getUint32(i,true)===0x06054b50){tail=i;break}if(tail<0)throw Error('请另存为标准.xlsx；暂不读取加密文件或旧.xls');const n=v.getUint16(tail+10,true);if(n>3000||n===65535)throw Error('工作簿过大或采用ZIP64');let pos=v.getUint32(tail+16,true),size=0;const entries=new Map(),decoder=new TextDecoder();for(let i=0;i<n;i++){if(pos+46>b.length||v.getUint32(pos,true)!==0x02014b50)throw Error('Excel压缩目录损坏');const z=v.getUint32(pos+20,true),r=v.getUint32(pos+24,true),nl=v.getUint16(pos+28,true),el=v.getUint16(pos+30,true),cl=v.getUint16(pos+32,true);if(v.getUint16(pos+8,true)&1)throw Error('请先解除工作簿密码');size+=r;if(size>80*1024*1024||r>30*1024*1024)throw Error('解压内容超过限制');entries.set(decoder.decode(b.slice(pos+46,pos+46+nl)),{offset:v.getUint32(pos+42,true),size:z,method:v.getUint16(pos+10,true),raw:r});pos+=46+nl+el+cl}
  const text=async name=>{const e=entries.get(name);if(!e)return '';const p=e.offset;if(p+30>b.length)throw Error('Excel文件损坏');const start=p+30+v.getUint16(p+26,true)+v.getUint16(p+28,true);if(start+e.size>b.length)throw Error('Excel压缩内容不完整');let bytes=b.slice(start,start+e.size);if(e.method===8){if(!globalThis.DecompressionStream)throw Error('浏览器不支持本地Excel解压，请升级Chrome/Edge或改用CSV');bytes=new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer())}else if(e.method!==0)throw Error('不支持该压缩方式');if(bytes.length!==e.raw)throw Error('Excel解压长度不一致');return decoder.decode(bytes)};
@@ -14,9 +49,9 @@ const clean=x=>String(x??'').trim().replace(/[\s（）()]/g,'');
 H.sourcePeriod=rows=>{const text=rows.flat().filter(v=>String(v).includes('应用的筛选器')).join(' '),m=[...text.matchAll(/(\d{4})年(\d{1,2})月(\d{1,2})日/g)];if(m.length<2)return null;const start=H.date(m[0].slice(1).join('-'));let end=H.date(m[1].slice(1).join('-'));if(text.slice(m[1].index).includes('之前')){const d=new Date(end+'T00:00:00Z');d.setUTCDate(d.getUTCDate()-1);end=d.toISOString().slice(0,10)}return {start,end}};
 H.detect=rows=>{let i=rows.findIndex(r=>r.includes('综合洗盘目标')&&r.includes('人员'));if(i>=0)return {kind:rows[i].includes('房间号')?'washDetail':'houseSummary',header:i};i=rows.findIndex(r=>r.includes('带看量')&&r.includes('一手带看量')&&r.includes('顾问'));if(i>=0)return {kind:'viewSummary',header:i};i=rows.findIndex(r=>r.includes('渠道')&&r.includes('新增量')&&r.includes('7天进入一带率'));if(i>=0)return {kind:'channelLong',header:i};i=rows.findIndex((r,i)=>r[0]==='渠道'&&r.includes('重点渠道总计')&&rows[i+1]?.[0]==='顾问');if(i>=0)return {kind:'channelPivot',header:i};i=rows.findIndex(r=>r.some(v=>H.aliases._joinDate.includes(v))&&r.some(v=>H.aliases._person.includes(v)));if(i>=0)return {kind:'roster',header:i};let best=0,bestScore=-1;rows.slice(0,15).forEach((r,j)=>{const score=r.filter(v=>Object.values(H.aliases).some(a=>a.map(clean).includes(clean(v)))).length;if(score>bestScore){best=j;bestScore=score}});return {kind:'generic',header:best}};
 H.prepare=(sheet,file,hash)=>{const d=H.detect(sheet.rows),period=H.sourcePeriod(sheet.rows),rolling=['houseSummary','washDetail'].includes(d.kind),headers=sheet.rows[d.header]||[];const category=d.kind==='roster'?'roster':headers.some(h=>H.aliases.marketAmount.includes(h))?'market':headers.some(h=>H.aliases._estate.includes(h))?'flow':'activity';let snapshot=H.ui.end;const dm=file.match(/(\d{1,2})月(\d{1,2})日/);if(dm)snapshot=H.date(H.ui.end.slice(0,4)+'-'+dm[1]+'-'+dm[2]);const q={id:H.id(),file,sheet:sheet.name,hash,rows:sheet.rows,date1904:sheet.date1904,...d,category,start:period?.start||H.ui.start,end:period?.end||snapshot,periodType:rolling?'rolling30':period?'monthToDate':'range',periodVerified:!!period,status:'pending',mapping:[],multiplier:1};q.signature=JSON.stringify([d.kind,headers]);const preset=H.data.presets?.[q.signature];q.mapping=headers.map((h,j)=>preset?.mapping?.[j]||Object.entries(H.aliases).find(([k,vs])=>vs.some(x=>clean(x)===clean(h))&&!(category==='activity'&&['flowCount','customerCount'].includes(k)))?.[0]||[...H.data.metrics,...H.data.archivedMetrics].find(m=>clean(m.label)===clean(h))?.id||'');if(category==='flow')q.mapping=headers.map((h,j)=>H.aliases.flowCount.includes(h)?'flowCount':q.mapping[j]);if(preset?.multiplier)q.multiplier=preset.multiplier;return q};
-H.readFiles=async files=>{for(const file of [...files]){try{if(file.size>25*1024*1024)throw Error('单个文件超过25MB');if(file.type.startsWith('image/')){H.ui.images.push({name:file.name,url:URL.createObjectURL(file)});continue}if(/\.json$/i.test(file.name)){await H.restore(file);continue}const bytes=await file.arrayBuffer(),hash=await H.hash(bytes);if(H.ui.queue.some(q=>q.hash===hash)){H.toast(file.name+' 已在本次队列中');continue}let sheets;if(/\.xlsx$/i.test(file.name))sheets=await H.readXlsx(bytes);else if(/\.(csv|tsv|txt)$/i.test(file.name)){let text=new TextDecoder().decode(bytes);if(text.includes('\ufffd'))text=new TextDecoder('gb18030').decode(bytes);sheets=[{name:'文本表',rows:H.csv(text)}]}else throw Error('支持.xlsx、CSV、TSV、PNG/JPG及完整JSON备份');for(const sh of sheets)H.ui.queue.push(H.prepare(sh,file.name,hash))}catch(e){H.ui.queue.push({id:H.id(),file:file.name,sheet:'',status:'error',error:e.message})}}H.render();H.toast('文件已在本机读取；核对后再确认入表')};
+H.readFiles=async files=>{for(const file of [...files]){try{if(file.size>25*1024*1024)throw Error('单个文件超过25MB');if(file.type.startsWith('image/')){H.ui.images.push({name:file.name,url:URL.createObjectURL(file)});continue}if(/\.json$/i.test(file.name)){await H.restore(file);continue}const bytes=await file.arrayBuffer(),hash=await H.hash(bytes);if(H.ui.queue.some(q=>q.hash===hash)){H.toast(file.name+' 已在本次队列中');continue}let sheets;if(/\.xlsx$/i.test(file.name))sheets=await H.readXlsx(bytes);else if(/\.(csv|tsv|txt)$/i.test(file.name)){let text=new TextDecoder().decode(bytes);if(text.includes('\ufffd'))text=new TextDecoder('gb18030').decode(bytes);sheets=[{name:'文本表',...H.parseTextTable(text)}]}else throw Error('支持.xlsx、CSV、TSV、PNG/JPG及完整JSON备份');for(const sh of sheets)H.ui.queue.push(H.prepare(sh,file.name,hash))}catch(e){H.ui.queue.push({id:H.id(),file:file.name,sheet:'',status:'error',error:e.message})}}H.render();H.toast('文件已在本机读取；核对后再确认入表')};
 H.pasteTable=()=>{H.modal('粘贴核对后的表格文字','<p class="subtle">支持从Excel复制的制表符表格。截图尚未自动识别，请先核对转写内容。</p><textarea id="paste-table" placeholder="姓名\t门店\t店组\t指标…"></textarea>','<button class="btn" onclick="HP.close()">取消</button><button class="btn primary" onclick="HP.acceptPastedTable()">读取表格</button>')};
-H.acceptPastedTable=async()=>{try{const text=document.getElementById('paste-table').value,rows=H.csv(text);if(!rows.length)throw Error('没有表格内容');H.ui.queue.push(H.prepare({name:'核对后表格',rows},'粘贴的表格',await H.hash(new TextEncoder().encode(text))));H.close();H.render()}catch(e){H.toast(e.message)}};
+H.acceptPastedTable=async()=>{try{const text=document.getElementById('paste-table').value,table=H.parseTextTable(text);if(!table.rows.length)throw Error('没有表格内容');H.ui.queue.push(H.prepare({name:'核对后表格',...table},'粘贴的表格',await H.hash(new TextEncoder().encode(text))));H.close();H.render()}catch(e){H.toast(e.message)}};
 const kindNames={houseSummary:'房活动量分层汇总',washDetail:'洗盘明细（仅核对）',viewSummary:'带看分层汇总',channelLong:'渠道长表',channelPivot:'渠道双层表头',roster:'人员名单',generic:'自定义字段映射'};
 const dims=[['_store','门店'],['_group','店组'],['_person','姓名'],['_personId','员工编码'],['_joinDate','入职日期'],['_role','岗位'],['_grade','职等'],['_start','开始日期'],['_end','结束日期'],['_date','业务日期'],['_estate','楼盘'],['_business','业务类型'],['marketAmount','市场成交额'],['companyAmount','我司成交额'],['flowCount','流向带看量'],['customerCount','流向客户数']];
 H.updateQ=(id,key,value)=>{const q=H.ui.queue.find(x=>x.id===id);if(q){q[key]=value;q.status='pending'}};

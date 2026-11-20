@@ -88,10 +88,10 @@ const periodKey=f=>f.start+'|'+f.end+'|'+(f.periodType==='rolling30'?'rolling30'
 const scopeKey=(range,exclude)=>[range.start,range.end,range.mode||'range',H.weekMonth(),exclude?'strict':'all'].join('|');
 const contextFor=(id,category,range,options)=>{
  const key=category+'|'+id+'|'+scopeKey(range,options.excludeLeaders);
- if(active?.contexts.has(key))return active.contexts.get(key);
- const all=H.data.facts.filter(f=>f.category===category&&f.metric===id&&H.periodContains(f,range.start,range.end,range.mode));
+ if(!options.facts&&active?.contexts.has(key))return active.contexts.get(key);
+ const all=(options.facts||H.data.facts).filter(f=>f.category===category&&f.metric===id&&H.periodContains(f,range.start,range.end,range.mode));
  const context={id,category,range,options,all,entities:H.entities(),cache:new Map(),rate:H.meta(id).kind==='rate'||H.meta(id).unit==='%'};
- if(active)active.contexts.set(key,context);
+ if(active&&!options.facts)active.contexts.set(key,context);
  return context;
 };
 const collect=(entity,c,depth=0)=>{
@@ -152,7 +152,7 @@ H.calendarValue=(entity,id,category='activity',range={start:H.ui.start,end:H.ui.
  }else n=pieces.reduce((s,p)=>s+p.value,0);
  if(!Number.isFinite(n))return {n:null,rows,partial,reason:'包含无效数值，请核对底表',coverage};
  if(options.strict&&pieces.some(p=>p.partial&&!p.sourceCoverageOnly))return {n:null,rows,partial,reason:'缺少完整组汇总或成员数据，暂不排名',coverage};
- return {n,rows,partial,coverage,reason:coverage.reason||(partial?'仅累计已提供记录，缺失未补0':'')};
+ return {n,rows,partial,scopePartial:pieces.some(p=>p.partial),coverage,reason:coverage.reason||(partial?'仅累计已提供记录，缺失未补0':'')};
 };
 const oldValue=H.value;
 H.value=(entity,id,category='activity',depth=0)=>{

@@ -104,7 +104,7 @@ H.renderActivity=()=>{
  const at=html.indexOf('<section id="activity-leaderboard"');return at>=0?html.slice(0,at)+extra+html.slice(at):html+extra;
 };
 const render=H.render;
-H.render=()=>{render();const badge=document.querySelector('.topbar .pill');if(badge)badge.textContent='组织管理版 V3.4';};
+H.render=()=>{render();const badge=document.querySelector('.topbar .pill');if(badge)badge.textContent='组织管理版 V3.5';};
 // A reload must keep the last imported calendar month complete, rather than cut
 // weekly/monthly totals at today's date through the legacy initial batch range.
 const init=H.init;

@@ -28,6 +28,8 @@ jobs:
           node tests/weekly-reload.test.cjs
           node tests/weekly-import.test.cjs
           node tests/performance-import.test.cjs
+          node tests/weekly-viewing.test.cjs
+          node tests/annual-performance.test.cjs
       - name: Package static app (code only)
         uses: actions/upload-artifact@v4
         with:
