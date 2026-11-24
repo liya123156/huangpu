@@ -61,8 +61,8 @@ test('the monthly page renders all hierarchy rows and three months without old e
   assert(!H.html.includes('缺数据不按0'));
   assert(!H.html.includes('0</b> 为底表明确零值'));
   assert(H.html.includes('未记录活动量按'));
-  assert.equal(H.version, '3.9.0');
-  assert.equal(badge.textContent, '组织管理版 V3.9.0');
+  assert.equal(H.version, '3.9.1');
+  assert.equal(badge.textContent, '组织管理版 V3.9.1');
 });
 
 test('unrecorded activity and ratios display as red zero while source marks stay visible', () => {
