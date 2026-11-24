@@ -89,7 +89,9 @@ const scopeKey=(range,exclude)=>[range.start,range.end,range.mode||'range',H.wee
 const contextFor=(id,category,range,options)=>{
  const key=category+'|'+id+'|'+scopeKey(range,options.excludeLeaders);
  if(!options.facts&&active?.contexts.has(key))return active.contexts.get(key);
- const all=(options.facts||H.data.facts).filter(f=>f.category===category&&f.metric===id&&H.periodContains(f,range.start,range.end,range.mode));
+ const source=options.facts||H.data.facts;
+ const preferred=H.monthlyPreferredFacts?H.monthlyPreferredFacts(source):source;
+ const all=preferred.filter(f=>f.category===category&&f.metric===id&&H.periodContains(f,range.start,range.end,range.mode));
  const context={id,category,range,options,all,entities:H.entities(),cache:new Map(),rate:H.meta(id).kind==='rate'||H.meta(id).unit==='%'};
  if(active&&!options.facts)active.contexts.set(key,context);
  return context;

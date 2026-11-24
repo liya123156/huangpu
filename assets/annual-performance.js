@@ -77,7 +77,8 @@ const activityCutoff=f=>{
 // still have an explicit number (including zero) for every selected period.
 H.orgActivityContext=rule=>{
  const requested={start:H.ui.start,end:H.ui.end,mode:H.ui.period},root=rule.rankScope==='region'?{level:'region',store:'',group:'',person:'',personId:''}:H.root();
- const metrics=rule.activities.map(a=>{const facts=H.data.facts.filter(f=>f.category==='activity'&&f.metric===a.id&&H.within(f,root)&&H.periodContains(f,requested.start,requested.end,requested.mode)),periods=new Map();for(const f of facts){const key=activityPeriodKey(f);if(!periods.has(key))periods.set(key,[]);periods.get(key).push(f);}return {...a,facts,periods};});
+ const source=H.monthlyPreferredFacts?H.monthlyPreferredFacts(H.data.facts):H.data.facts;
+ const metrics=rule.activities.map(a=>{const facts=source.filter(f=>f.category==='activity'&&f.metric===a.id&&H.within(f,root)&&H.periodContains(f,requested.start,requested.end,requested.mode)),periods=new Map();for(const f of facts){const key=activityPeriodKey(f);if(!periods.has(key))periods.set(key,[]);periods.get(key).push(f);}return {...a,facts,periods};});
  const periods=[],excluded=[],allPeriods=new Map();for(const metric of metrics)for(const [key,rows]of metric.periods)if(!allPeriods.has(key))allPeriods.set(key,rows);
  for(const [key,rows]of allPeriods){
   const absent=metrics.filter(m=>!m.periods.has(key));if(absent.length){excluded.push({start:rows[0].start,end:rows[0].end,reason:absent.map(m=>H.meta(m.id).label).join('、')+'未提供该周期，未纳入共同窗口'});continue;}

@@ -31,6 +31,10 @@ jobs:
           node tests/weekly-viewing.test.cjs
           node tests/annual-performance.test.cjs
           node tests/org-activity-coverage.test.cjs
+          node tests/monthly-import.test.cjs
+          node tests/monthly-model.test.cjs
+          node tests/monthly-export.test.cjs
+          node tests/monthly-ui.test.cjs
       - name: Package static app (code only)
         uses: actions/upload-artifact@v4
         with:
