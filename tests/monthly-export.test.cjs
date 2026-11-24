@@ -1,9 +1,9 @@
 /* Synthetic export checks: complete hierarchy, current column order and true zeros. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
-const ops=[],boxes=[];
+const ops=[],boxes=[],encoded=[];
 const ctx={font:'',fillStyle:'',textBaseline:'',strokeStyle:'',lineWidth:1,scale(){},measureText(t){return {width:String(t).length*10};},fillText(t,x,y){ops.push({text:String(t),x,y,color:this.fillStyle});},fillRect(){},strokeRect(x,y,width,height){boxes.push({x,y,width,height});}};
 const H={fmt:x=>x===null||x===undefined?'—':String(x),monthlyFormatCell(n,m,k){const value=n.months[m][k]??0;return {text:k==='rate'?(value*100).toFixed(1)+'%':String(value),value,zero:value===0,asterisk:k==='owner'&&m==='2026-10'};}};
-const document={fonts:{ready:Promise.resolve()},createElement(){return {width:0,height:0,getContext:()=>ctx,toBlob(cb){cb({type:'image/png',width:this.width,height:this.height});}};}};
+const document={fonts:{ready:Promise.resolve()},createElement(){return {width:0,height:0,getContext:()=>ctx,toBlob(cb){const blob={type:'image/png',width:this.width,height:this.height};encoded.push(blob);cb(blob);}};}};
 const sandbox={HP:H,document,navigator:{},URL:{},console};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../assets/monthly-export.js'),'utf8'),sandbox);
 const months=['2026-09','2026-10','2026-11'];
 const columns=[['view','买卖带看次数'],['house','新增买卖房源'],['owner','业主面见'],['hmall','hmall陪带次数'],['channel','重点渠道新增'],['entered','重点渠道当月进入带看'],['rate','重点渠道进入带看率']].map(([key,label])=>({key,label}));
@@ -39,10 +39,30 @@ const model={store:'合成门店',title:'合成门店活动量',subtitle:'9月 /
   const metricText=singleOps.find(x=>x.text===String(1103+i));assert(metricText&&metricText.y>=blockTop&&metricText.y+20<=blockTop+row.height);blockTop+=row.height;
  }
  assert.equal(blockTop,singleLayout.titleHeight+singleLayout.tableHeight);assert(singleOps.find(x=>x.text.startsWith('本店活动量标杆与重点提醒')).y>blockTop);
+ // A region-group image is one combined PNG, not a loop of store exports. Its
+ // wider object column keeps store, group and manager labels together, and a
+ // defensive kind boundary excludes any accidental person rows or rankings.
+ const groupStores=['合成甲店','合成乙店','合成丙店','合成丁店'],groupRows=groupStores.flatMap((store,si)=>['A','B','C','D'].map((letter,gi)=>({level:'group',store,group:store+letter+'组',label:store+' · '+letter+'组',managerNames:['合成经理'+(si*4+gi+1)],months:Object.fromEntries(months.map(m=>[m,{...values,view:700+si*4+gi}]))})));
+ const strayPerson={level:'person',label:'不应导出的合成个人',months:Object.fromEntries(months.map(m=>[m,{...values,view:98765}]))};
+ const groupModel={...model,kind:'groups',store:'黄浦大区',title:'黄浦大区｜店组活动量',subtitle:'11月 · 16个店组',months:[selectedMonth],rows:[...groupRows,strayPerson]},groupBefore=JSON.stringify(groupModel),groupLayout=H.monthlyImageLayout(groupModel);
+ assert.equal(groupLayout.widths[0],260);assert.equal(layout.widths[0],210);assert.equal(groupLayout.rowBlocks.length,16);assert(Math.abs(groupLayout.widths.reduce((sum,w)=>sum+w,0)+groupLayout.pad*2-groupLayout.width)<1e-8);
+ const groupOpsStart=ops.length,encodedBefore=encoded.length,groupBlob=await H.renderMonthlyStorePNG(groupModel),groupOps=ops.slice(groupOpsStart);
+ assert.equal(encoded.length,encodedBefore+1,'all sixteen groups are encoded into a single image');assert.equal(groupBlob.type,'image/png');
+ for(const row of groupRows){assert(groupOps.some(op=>op.text===row.label),'every group is present');assert(groupOps.some(op=>op.text==='经理：'+row.managerNames[0]),'every manager label is present');assert(groupOps.some(op=>op.text===String(row.months[selectedMonth].view)),'every group total is present');}
+ assert.equal(groupOps.filter(op=>op.text==='25.0%').length,16);assert(!groupOps.some(op=>['不应导出的合成个人','98765','合成标杆 · A组','合成提醒 · B组'].includes(op.text)));assert(!groupOps.some(op=>op.text.startsWith('本店活动量标杆与重点提醒')),'group exports have no individual ranking section');assert.equal(JSON.stringify(groupModel),groupBefore,'export filtering never edits the source model');
  const downloads=[],pending=new Map();H.monthlyExportModel=store=>({store,months,rows:[{}]});H.renderMonthlyStorePNG=m=>new Promise(resolve=>pending.set(m.store,resolve));H.download=(name,blob)=>downloads.push({name,blob});H.toast=()=>{};
  const first=H.saveMonthlyStore('合成甲店'),second=H.saveMonthlyStore('合成乙店');pending.get('合成甲店')('甲图片');await first;pending.get('合成乙店')('乙图片');await second;
  assert(downloads[0].name.startsWith('合成甲店_'));assert.equal(downloads[0].blob,'甲图片');assert(downloads[1].name.startsWith('合成乙店_'));assert.equal(downloads[1].blob,'乙图片');
  assert(downloads[0].name.includes('2026-09至2026-11'),'three-month filenames retain their date range');
  H.monthlyExportModel=store=>({store,months:[selectedMonth],rows:[{}]});const one=H.saveMonthlyStore('合成单月店');pending.get('合成单月店')('单月图片');await one;assert.equal(downloads[2].name,'合成单月店_活动量_2026-11.png');assert.equal(downloads[2].blob,'单月图片');
- console.log('monthly export: complete hierarchy, one-month-only data, dynamic name/manager row heights, unchanged three-month rows, zeros, rates, marks, column order and concurrent filenames passed');
+ const requestedGroups=[],renderedGroups=[],previews=[],messages=[];
+ H.monthlyGroupExportModel=store=>{requestedGroups.push(store);return {...groupModel,store:store||'黄浦大区',rows:store?groupRows.filter(row=>row.store===store):groupRows};};H.monthlyExportModel=()=>{throw Error('group actions must use the group model');};
+ H.renderMonthlyStorePNG=async exported=>{renderedGroups.push(exported);return {type:'image/png',scope:exported.store};};H.previewMonthlyStore=(blob,name,kind)=>previews.push({blob,name,kind});H.toast=message=>messages.push(message);
+ await H.saveMonthlyGroups();assert.equal(downloads.length,4,'one region-group action creates one download');assert.equal(downloads[3].name,'黄浦大区_店组活动量_2026-11.png');assert.equal(renderedGroups[0].rows.length,16);assert.equal(renderedGroups[0].kind,'groups');assert.equal(renderedGroups[0].ranking,null);assert(messages.includes('店组看板图片已生成'));
+ await H.copyMonthlyGroups('合成甲店');assert.equal(previews.length,1);assert.equal(previews[0].name,'合成甲店_店组活动量_2026-11.png');assert.equal(previews[0].kind,'groups');assert.equal(previews[0].blob.scope,'合成甲店');assert.equal(renderedGroups[1].rows.length,4);assert.equal(requestedGroups[1],'合成甲店');
+ const clipboardWrites=[];sandbox.ClipboardItem=class{constructor(items){this.items=items;}};sandbox.navigator.clipboard={write:async items=>clipboardWrites.push(items)};
+ await H.copyMonthlyGroups();assert.equal(clipboardWrites.length,1);assert.equal(clipboardWrites[0].length,1);assert.equal((await clipboardWrites[0][0].items['image/png']).scope,'黄浦大区');assert.equal(previews.length,1,'successful clipboard copy does not create a separate preview');assert(messages.includes('店组看板已复制，可直接粘贴图片'));
+ sandbox.navigator.clipboard.write=async()=>{throw Error('synthetic clipboard rejection');};await H.copyMonthlyGroups('合成乙店');assert.equal(previews.length,2);assert.equal(previews[1].kind,'groups');assert.equal(previews[1].name,'合成乙店_店组活动量_2026-11.png');
+ H.monthlyGroupExportModel=store=>({...groupModel,store:store||'黄浦大区',months,rows:groupRows.filter(row=>row.store===store)});await H.saveMonthlyGroups('合成丁店');assert.equal(downloads.at(-1).name,'合成丁店_店组活动量_2026-09至2026-11.png');assert.equal(renderedGroups.at(-1).rows.length,4);
+ console.log('monthly export: full store and combined sixteen-group images, correct model/copy/save dispatch, single-month heights and isolation, three-month layout, zeros, rates, marks, column order and filenames passed');
 })().catch(e=>{console.error(e);process.exit(1);});

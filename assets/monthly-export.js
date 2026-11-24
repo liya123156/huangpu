@@ -4,14 +4,16 @@
 const H=HP,face='"Microsoft YaHei","Noto Sans CJK SC","PingFang SC",sans-serif';
 const wrap=(ctx,text,width)=>{const lines=[];let line='';for(const ch of String(text??'')){if(ch==='\n'){lines.push(line);line='';continue;}if(line&&ctx.measureText(line+ch).width>width){lines.push(line);line=ch;}else line+=ch;}lines.push(line);return lines;};
 const monthLabel=m=>Number(String(m).slice(5,7))+'月';
+const imageModel=model=>model.kind==='groups'?{...model,rows:(model.rows||[]).filter(row=>row.level==='group'),ranking:null}:model;
 const rankReason=(item,ranking,side)=>{
  if(typeof H.monthlyRankReason==='function')return H.monthlyRankReason(item,ranking,side);
  const values=item.values||{};
  return '买卖带看 '+H.fmt(values.view)+' 次；重点渠道新增 '+H.fmt(values.channel)+'。两项等权百分位综合'+(side==='bottom'?'位于本店末段，建议核实活动安排与需要的支持。':'位于本店前列，可结合具体案例分享做法。');
 };
 H.monthlyImageLayout=(model,measure)=>{
+ model=imageModel(model);
  const columns=model.columns.filter(c=>!['organization','object','month'].includes(c.key||c.id));
- const width=1440,pad=36,objectWidth=210,monthWidth=84,remaining=width-pad*2-objectWidth-monthWidth;
+ const width=1440,pad=36,objectWidth=model.kind==='groups'?260:210,monthWidth=84,remaining=width-pad*2-objectWidth-monthWidth;
  const weights={house:1,owner:.82,hmall:1,channel:1,entered:1.25,rate:1.2,view:1};
  const total=columns.reduce((s,c)=>s+(weights[c.key||c.id]||1),0);
  measure=measure||document.createElement('canvas').getContext('2d');if(!measure)throw Error('当前浏览器无法生成图片');
@@ -29,8 +31,9 @@ H.monthlyImageLayout=(model,measure)=>{
  return {width,pad,columns,widths:[objectWidth,monthWidth,...columns.map(c=>remaining*(weights[c.key||c.id]||1)/total)],rowHeight,headerHeight,titleHeight:116,rowBlocks,tableHeight:headerHeight+rowBlocks.reduce((sum,row)=>sum+row.height,0)};
 };
 H.renderMonthlyStorePNG=async model=>{
+ model=imageModel(model);
  if(document.fonts?.ready)await document.fonts.ready;
- if(!model.rows?.length)throw Error('该店暂无可导出的月度记录');
+ if(!model.rows?.length)throw Error(model.kind==='groups'?'所选范围暂无可导出的店组记录':'该店暂无可导出的月度记录');
  const months=model.months,measure=document.createElement('canvas').getContext('2d');
  if(!measure)throw Error('当前浏览器无法生成图片');
  const layout=H.monthlyImageLayout(model,measure),{width,pad,columns,widths,headerHeight,titleHeight,tableHeight,rowBlocks}=layout;
@@ -64,7 +67,7 @@ H.renderMonthlyStorePNG=async model=>{
  const ranksHeight=ranking?76+Math.max(0,...rankCards.map(c=>c.height))+24+rankNoteLines.length*24:0;
  const height=titleHeight+tableHeight+notesHeight+ranksHeight+62;
  const scale=Math.min(1.6,Math.sqrt(22000000/(width*height)),16000/height,16000/width);
- if(scale<.7)throw Error('这家店的记录过长，请缩短对比月份后再复制');
+ if(scale<.7)throw Error((model.kind==='groups'?'所选店组':'这家店')+'的记录过长，请缩短对比月份后再复制');
  const canvas=document.createElement('canvas');canvas.width=Math.ceil(width*scale);canvas.height=Math.ceil(height*scale);
  const ctx=canvas.getContext('2d');if(!ctx)throw Error('当前浏览器无法生成图片');
  ctx.scale(scale,scale);ctx.textBaseline='top';ctx.fillStyle='#ffffff';ctx.fillRect(0,0,width,height);
@@ -72,10 +75,10 @@ H.renderMonthlyStorePNG=async model=>{
  const box=(x,y,w,h,fill)=>{ctx.fillStyle=fill;ctx.fillRect(x,y,w,h);ctx.strokeStyle='#ddd6ed';ctx.lineWidth=.8;ctx.strokeRect(x,y,w,h);};
  const center=(s,x,y,w,h,size=20,color='#252139',bold=false)=>{ctx.font=(bold?'700 ':'400 ')+size+'px '+face;const lines=wrap(ctx,s,w-20),lineHeight=size+7,top=y+(h-lines.length*lineHeight)/2+2;for(let i=0;i<lines.length;i++)text(lines[i],x+(w-ctx.measureText(lines[i]).width)/2,top+i*lineHeight,size,color,bold);};
  ctx.fillStyle='#210d54';ctx.fillRect(pad,18,width-pad*2,82);
- text(model.title||model.store+' · 月度活动量',pad+22,31,29,'#ffffff',true);
- text(model.subtitle||months.map(monthLabel).join(' / ')+' · 门店、店组、个人',pad+22,70,17,'#e2d8f3');
+ text(model.title||model.store+(model.kind==='groups'?' · 店组活动量':' · 月度活动量'),pad+22,31,29,'#ffffff',true);
+ text(model.subtitle||months.map(monthLabel).join(' / ')+(model.kind==='groups'?' · '+model.rows.length+'个店组':' · 门店、店组、个人'),pad+22,70,17,'#e2d8f3');
  let x=pad,y=titleHeight;
- const headers=['组织 / 姓名','月份',...columns.map(c=>c.label)];
+ const headers=[model.kind==='groups'?'门店 / 店组':'组织 / 姓名','月份',...columns.map(c=>c.label)];
  widths.forEach((w,i)=>{box(x,y,w,headerHeight,'#eee9f8');center(headers[i],x,y,w,headerHeight,20,'#3a2856',true);x+=w;});
  y+=headerHeight;
  for(const [rowIndex,node] of model.rows.entries()){
@@ -122,23 +125,26 @@ H.renderMonthlyStorePNG=async model=>{
  text('黄浦大区 · 组织管理与人效 · 内部工作资料',pad,height-30,14,'#8a7a98');
  return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(Error('图片生成失败')),'image/png'));
 };
-H.previewMonthlyStore=(blob,filename)=>{
+H.previewMonthlyStore=(blob,filename,kind='store')=>{
  if(H.monthlyPreviewURL)URL.revokeObjectURL(H.monthlyPreviewURL);
  H.monthlyExportBlob=blob;H.monthlyExportFilename=filename;H.monthlyPreviewURL=URL.createObjectURL(blob);
- H.modal('门店看板图片','<p class="subtle">已包含本店全部店组和当前在职顾问。可右键复制图片，或保存后发送。</p><img style="display:block;width:100%;height:auto;border:1px solid #ddd3ea" src="'+H.monthlyPreviewURL+'" alt="完整门店月度活动量看板图片">','<button class="btn" onclick="HP.close()">关闭</button><button class="btn primary" onclick="HP.download(HP.monthlyExportFilename,HP.monthlyExportBlob)">保存图片</button>');
+ const groups=kind==='groups',description=groups?'已将所选范围的全部店组合并在一张图片中。':'已包含本店全部店组和当前在职顾问。';
+ H.modal(groups?'店组看板图片':'门店看板图片','<p class="subtle">'+description+'可右键复制图片，或保存后发送。</p><img style="display:block;width:100%;height:auto;border:1px solid #ddd3ea" src="'+H.monthlyPreviewURL+'" alt="'+(groups?'店组月度活动量看板图片':'完整门店月度活动量看板图片')+'">','<button class="btn" onclick="HP.close()">关闭</button><button class="btn primary" onclick="HP.download(HP.monthlyExportFilename,HP.monthlyExportBlob)">保存图片</button>');
 };
-const exportStore=async(store,copy)=>{
+const exportStore=async(store,copy,groups=false)=>{
  try{
-  const model=H.monthlyExportModel(store);if(!store||!model.rows?.length){H.toast('请先选择有数据的门店');return;}
-  const period=model.months.length===1?model.months[0]:model.months[0]+'至'+model.months.at(-1),filename=(store+'_活动量_'+period+'.png').replace(/[\\/:*?"<>|]/g,'_');
+  const model=groups?imageModel({...H.monthlyGroupExportModel(store),kind:'groups'}):H.monthlyExportModel(store);if((!groups&&!store)||!model.rows?.length){H.toast(groups?'所选范围暂无可导出的店组记录':'请先选择有数据的门店');return;}
+  const period=model.months.length===1?model.months[0]:model.months[0]+'至'+model.months.at(-1),scope=groups?model.store||store||'黄浦大区':store,filename=(scope+(groups?'_店组活动量_':'_活动量_')+period+'.png').replace(/[\\/:*?"<>|]/g,'_'),kind=groups?'groups':'store',subject=groups?'店组看板':'本店完整看板';
   const promise=H.renderMonthlyStorePNG(model);
   if(copy&&navigator.clipboard?.write&&globalThis.ClipboardItem){
-   try{await navigator.clipboard.write([new ClipboardItem({'image/png':promise})]);H.toast('本店完整看板已复制，可直接粘贴图片');return;}
-   catch(error){const blob=await promise;H.previewMonthlyStore(blob,filename);H.toast('浏览器未允许直接复制，已打开完整图片，可右键复制或保存');return;}
+   try{await navigator.clipboard.write([new ClipboardItem({'image/png':promise})]);H.toast(subject+'已复制，可直接粘贴图片');return;}
+   catch(error){const blob=await promise;H.previewMonthlyStore(blob,filename,kind);H.toast('浏览器未允许直接复制，已打开完整图片，可右键复制或保存');return;}
   }
-  const blob=await promise;if(copy)H.previewMonthlyStore(blob,filename);else{H.download(filename,blob);H.toast('本店完整看板图片已生成');}
+  const blob=await promise;if(copy)H.previewMonthlyStore(blob,filename,kind);else{H.download(filename,blob);H.toast(subject+'图片已生成');}
  }catch(error){H.toast('图片未生成：'+error.message);}
 };
 H.copyMonthlyStore=store=>exportStore(store,true);
 H.saveMonthlyStore=store=>exportStore(store,false);
+H.copyMonthlyGroups=store=>exportStore(store,true,true);
+H.saveMonthlyGroups=store=>exportStore(store,false,true);
 })();

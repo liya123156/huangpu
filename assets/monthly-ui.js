@@ -2,7 +2,7 @@
 'use strict';
 (() => {
   const H = HP, E = H.esc;
-  H.version = '3.8.2';
+  H.version = '3.9.0';
   const KEYS = ['house', 'owner', 'hmall', 'channel', 'entered', 'rate', 'view'];
   const LABELS = {
     house: '新增买卖房源', owner: '业主面见', hmall: 'hmall陪带次数',
@@ -16,6 +16,7 @@
   };
   const SHARES = {house: 10, owner: 9, hmall: 10, channel: 11, entered: 13, rate: 13, view: 10};
   const scopeNote = '个人仅显示当前在职顾问；门店、店组保留当期历史合计。';
+  const groupScopeNote = '店组按原底表当期归属汇总，经理通过组合计查看活动量。';
   const zeroNote = '未记录活动量按0；新增与进入带看均为0时，进入带看率按0.0%显示。';
   const kind = {region: '大区', store: '门店', group: '店组', person: '个人'};
   const monthLabel = month => /^\d{4}-\d{2}$/.test(String(month)) ? Number(month.slice(5)) + '月' : String(month || '');
@@ -103,6 +104,10 @@
     for (const node of candidates) if (!used.has(node.id)) walk(node);
     return result;
   };
+  const groupRows = (view, store = '') => (view.nodes || []).filter(node => node.level === 'group' && (!store || node.store === store)).map(node => {
+    const name = String(node.label || node.group || '').replace(node.store || '', '').trim();
+    return {...node, label: [node.store, name].filter(Boolean).join(' · '), groupOverview: true};
+  });
   const sourceNotes = view => {
     const notes = new Set(), records = [];
     const shortDate = (date, month) => date.slice(0, 4) === month.slice(0, 4) ? Number(date.slice(5, 7)) + '/' + Number(date.slice(8, 10)) : date;
@@ -172,6 +177,15 @@
       rankMonth, ranking: view.rankings?.[store]?.[rankMonth] || (H.monthlyRanking ? H.monthlyRanking({store, month: rankMonth}) : null)
     };
   };
+  H.monthlyGroupExportModel = store => {
+    const selected = store === undefined ? state().store || '' : store;
+    const view = currentView(selected), rows = groupRows(view, selected), months = view.months || [], scope = selected || '黄浦大区';
+    return {
+      kind: 'groups', title: scope + '｜店组活动量', subtitle: periodLabel(months) + ' · ' + rows.length + '个店组',
+      store: scope, months, columns: columns(), rows, ranking: null,
+      notes: [groupScopeNote, zeroNote, ...sourceNotes({...view, nodes: rows})], sourceCutoff: view.sourceCutoff || ''
+    };
+  };
 
   const valueHTML = (node, month, key) => {
     const value = H.monthlyFormatCell(node, month, key);
@@ -179,13 +193,13 @@
   };
   const managerNames = node => node.level === 'group' ? [...new Set((Array.isArray(node.managerNames) ? node.managerNames : node.managerName ? [node.managerName] : []).filter(name => typeof name === 'string' && name.trim()))] : [];
   H.monthlyEntityLabel = node => (node.label || node.person || node.group || node.store || '黄浦大区合计') + (managerNames(node).length ? ' · ' + managerNames(node).join('、') : '');
-  const nameLabelHTML = node => E(node.label || node.person || node.group || node.store || '黄浦大区合计') + (managerNames(node).length ? '<span class="hp-monthly-manager"> · ' + managerNames(node).map(E).join('、') + '</span>' : '');
-  const kindHTML = node => node.level === 'person' ? '' : '<span class="hp-monthly-kind">' + E(kind[node.level] || '') + '</span>';
+  const nameLabelHTML = node => E(node.label || node.person || node.group || node.store || '黄浦大区合计') + (managerNames(node).length ? '<span class="hp-monthly-manager">' + (node.groupOverview ? '经理：' : ' · ') + managerNames(node).map(E).join('、') + '</span>' : '');
+  const kindHTML = node => node.level === 'person' || node.groupOverview ? '' : '<span class="hp-monthly-kind">' + E(kind[node.level] || '') + '</span>';
   const tableHTML = (rows, months, store) => {
-    const ordered = columns();
+    const ordered = columns(), groupOverview = rows.length > 0 && rows.every(node => node.groupOverview);
     return '<div class="hp-monthly-table-wrap" data-monthly-table-store="' + E(store) + '"><table class="hp-monthly-table" aria-label="' + E((store || '黄浦大区') + periodLabel(months) + '活动量，全列显示') + '">' +
       '<colgroup><col style="width:17%"><col style="width:7%">' + ordered.map(column => '<col style="width:' + column.share + '%">').join('') + '</colgroup>' +
-      '<thead><tr><th scope="col">组织 / 姓名</th><th scope="col">月份</th>' + ordered.map((column, index) =>
+      '<thead><tr><th scope="col">' + (groupOverview ? '门店 / 店组' : '组织 / 姓名') + '</th><th scope="col">月份</th>' + ordered.map((column, index) =>
         '<th scope="col" class="hp-monthly-column" draggable="true" tabindex="0" data-monthly-column="' + column.key + '" aria-label="' + E(column.label + '；可拖动，或按左右方向键调整顺序') + '" title="拖动表头调整顺序，也可用左右方向键">' +
         '<span class="hp-monthly-grip" aria-hidden="true">⠿</span><span class="hp-monthly-column-title">' + HEADS[column.key].map(E).join('<br>') + '</span>' +
         '<span class="hp-monthly-column-moves"><button type="button" data-monthly-move="-1" data-column="' + column.key + '" aria-label="' + E(column.label + '向左移动') + '"' + (index === 0 ? ' disabled' : '') + '>‹</button><button type="button" data-monthly-move="1" data-column="' + column.key + '" aria-label="' + E(column.label + '向右移动') + '"' + (index === ordered.length - 1 ? ' disabled' : '') + '>›</button></span></th>'
@@ -202,6 +216,7 @@
       ).join('') + '</section>').join('') + '</div>';
   };
   const exportButtons = (store, primary) => '<div class="hp-monthly-image-actions"><button class="btn' + (primary ? ' primary' : '') + '" type="button" data-monthly-action="copy" data-store="' + E(store) + '">' + (primary ? '复制本店图片' : '复制图片') + '</button><button class="btn" type="button" data-monthly-action="save" data-store="' + E(store) + '">保存图片</button></div>';
+  const groupExportButtons = store => '<div class="hp-monthly-image-actions"><button class="btn primary" type="button" data-monthly-action="copyGroups" data-store="' + E(store) + '">复制店组图片</button><button class="btn" type="button" data-monthly-action="saveGroups" data-store="' + E(store) + '">保存图片</button></div>';
   const amount = rawValue => {
     const value = rawValue == null ? 0 : rawValue;
     return finite(value) ? '<b' + (value === 0 ? ' class="hp-monthly-zero"' : '') + '>' + number(value) + '</b>' : '<b class="hp-monthly-missing">待核对</b>';
@@ -234,29 +249,33 @@
     if (typeof H.monthlyView !== 'function') return '<section id="monthly-activity"><h1>活动量月度对比</h1><p class="hp-monthly-empty">月度数据正在准备，请稍后刷新。</p></section>';
     const ui = state();
     if (ui.store === undefined) ui.store = H.ui.store || '';
+    if (!['detail', 'groups'].includes(ui.display)) ui.display = 'detail';
     let view = currentView();
     if (ui.store && !(view.stores || []).includes(ui.store)) { ui.store = ''; view = currentView(''); }
     const stores = view.stores || [], months = view.months || [], availableMonths = view.availableMonths || months;
     const multipleYears = new Set(availableMonths.map(month => String(month).slice(0, 4))).size > 1;
     const optionLabel = month => (multipleYears ? String(month).slice(0, 4) + '年' : '') + monthLabel(month);
     const selected = ui.store || '', shownStores = selected ? [selected] : stores;
+    const groupsOnly = ui.display === 'groups', groups = groupsOnly ? groupRows(view, selected) : [];
     if (!months.includes(ui.rankMonth)) ui.rankMonth = months.at(-1) || '';
     H.monthlyActiveView = view;
     const period = periodLabel(months);
     const region = (view.nodes || []).filter(node => node.level === 'region');
-    const notes = sourceNotes(view);
-    return '<div id="monthly-activity"><header class="hp-monthly-heading"><div><div class="eyebrow">黄浦大区 · 组织管理</div><h1>活动量月度对比</h1><p>' + E(period) + '</p></div>' +
+    const notes = sourceNotes(groupsOnly ? {...view, nodes: groups} : view);
+    return '<div id="monthly-activity"' + (groupsOnly ? ' class="hp-monthly-groups-view"' : '') + '><header class="hp-monthly-heading"><div><div class="eyebrow">黄浦大区 · 组织管理</div><h1>活动量月度对比</h1><p>' + E(period) + '</p></div>' +
       '<div class="hp-monthly-controls"><label for="monthly-store">门店<select id="monthly-store" data-monthly-filter="store"><option value="">黄浦大区 · 全部门店</option>' + stores.map(store => '<option value="' + E(store) + '"' + (selected === store ? ' selected' : '') + '>' + E(store) + '</option>').join('') + '</select></label>' +
-      '<label for="monthly-month">月份<select id="monthly-month" data-monthly-filter="month"><option value=""' + (!ui.month ? ' selected' : '') + '>全部月份</option>' + availableMonths.map(month => '<option value="' + E(month) + '"' + (ui.month === month ? ' selected' : '') + '>' + E(optionLabel(month)) + '</option>').join('') + '</select></label>' + (selected ? exportButtons(selected, true) : '') + '</div></header>' +
-      '<div class="hp-monthly-table-help"><span>门店、店组、在职顾问全部显示</span><span>拖动表头调整指标顺序<span class="hp-monthly-key-hint">，或选中表头后按 ← / →</span></span></div>' +
-      (!selected && region.length ? '<section class="hp-monthly-section hp-monthly-region"><div class="hp-monthly-section-head"><h2>黄浦大区合计</h2></div>' + tableHTML(region, months, '') + '</section>' : '') +
-      shownStores.map(store => '<section class="hp-monthly-section" data-monthly-store="' + E(store) + '"><div class="hp-monthly-section-head"><h2>' + E(store) + '</h2>' + (!selected ? exportButtons(store, false) : '') + '</div>' + tableHTML(storeRows(view, store), months, store) + '</section>').join('') +
+      '<label for="monthly-month">月份<select id="monthly-month" data-monthly-filter="month"><option value=""' + (!ui.month ? ' selected' : '') + '>全部月份</option>' + availableMonths.map(month => '<option value="' + E(month) + '"' + (ui.month === month ? ' selected' : '') + '>' + E(optionLabel(month)) + '</option>').join('') + '</select></label>' +
+      '<label for="monthly-display">展示<select id="monthly-display" data-monthly-filter="display"><option value="detail"' + (!groupsOnly ? ' selected' : '') + '>门店、店组、个人</option><option value="groups"' + (groupsOnly ? ' selected' : '') + '>只看店组</option></select></label>' + (groupsOnly ? groupExportButtons(selected) : selected ? exportButtons(selected, true) : '') + '</div></header>' +
+      '<div class="hp-monthly-table-help"><span>' + (groupsOnly ? groups.length + '个店组集中显示，可复制为一张图片' : '门店、店组、在职顾问全部显示') + '</span><span>拖动表头调整指标顺序<span class="hp-monthly-key-hint">，或选中表头后按 ← / →</span></span></div>' +
+      (groupsOnly ? '<section class="hp-monthly-section hp-monthly-group-overview"><div class="hp-monthly-section-head"><h2>' + E(selected || '黄浦大区') + ' · ' + groups.length + '个店组</h2></div>' + tableHTML(groups, months, selected) + '</section>' :
+        (!selected && region.length ? '<section class="hp-monthly-section hp-monthly-region"><div class="hp-monthly-section-head"><h2>黄浦大区合计</h2></div>' + tableHTML(region, months, '') + '</section>' : '') +
+        shownStores.map(store => '<section class="hp-monthly-section" data-monthly-store="' + E(store) + '"><div class="hp-monthly-section-head"><h2>' + E(store) + '</h2>' + (!selected ? exportButtons(store, false) : '') + '</div>' + tableHTML(storeRows(view, store), months, store) + '</section>').join('')) +
       (!shownStores.length ? '<section class="hp-monthly-empty"><p>导入活动量底表后，在这里按月查看门店、店组和个人数据。</p><button class="btn primary" type="button" data-monthly-action="import">前往数据导入</button></section>' : '') +
       '<p class="hp-monthly-legend">未记录活动量按<b class="hp-monthly-zero">0</b>；新增与进入带看均为0时，进入带看率按<b class="hp-monthly-zero">0.0%</b>显示。</p>' +
-      '<section class="hp-monthly-review" aria-label="门店顾问活动量前三与后三"><div class="hp-monthly-review-head"><h2>活动量标杆与重点提醒</h2><label for="monthly-rank-month">评选月份<select id="monthly-rank-month" data-monthly-filter="rankMonth"' + (ui.month ? ' disabled' : '') + '>' + months.map(month => '<option value="' + E(month) + '"' + (month === ui.rankMonth ? ' selected' : '') + '>' + E(optionLabel(month)) + '</option>').join('') + '</select></label></div>' +
+      (groupsOnly ? '' : '<section class="hp-monthly-review" aria-label="门店顾问活动量前三与后三"><div class="hp-monthly-review-head"><h2>活动量标杆与重点提醒</h2><label for="monthly-rank-month">评选月份<select id="monthly-rank-month" data-monthly-filter="rankMonth"' + (ui.month ? ' disabled' : '') + '>' + months.map(month => '<option value="' + E(month) + '"' + (month === ui.rankMonth ? ' selected' : '') + '>' + E(optionLabel(month)) + '</option>').join('') + '</select></label></div>' +
       '<p class="hp-monthly-rule">买卖带看、重点渠道新增分别在同店顾问中排名，各占50%。第3位同分者一并展示；未记录活动量按0。对应月份来源未导入、统计截止不一致或来源冲突时，暂不比较。</p>' +
-      '<div id="monthly-ranking-output" aria-live="polite">' + rankingHTML(view, shownStores, ui.rankMonth) + '</div></section>' +
-      '<footer class="hp-monthly-notes"><p>' + scopeNote + '</p><p>数据依据说明活动表现，具体原因需结合沟通了解。</p>' + notes.map(note => '<p>' + E(note) + '</p>').join('') + '</footer>' +
+      '<div id="monthly-ranking-output" aria-live="polite">' + rankingHTML(view, shownStores, ui.rankMonth) + '</div></section>') +
+      '<footer class="hp-monthly-notes"><p>' + (groupsOnly ? groupScopeNote : scopeNote) + '</p>' + (groupsOnly ? '' : '<p>数据依据说明活动表现，具体原因需结合沟通了解。</p>') + notes.map(note => '<p>' + E(note) + '</p>').join('') + '</footer>' +
       '<span id="monthly-order-status" class="hp-monthly-sr-only" role="status" aria-live="polite"></span></div>';
   };
 
@@ -369,7 +388,7 @@
     const button = event.target.closest('[data-monthly-action]');
     if (!button) return;
     if (button.dataset.monthlyAction === 'import') { H.go('import'); return; }
-    const handler = button.dataset.monthlyAction === 'copy' ? H.copyMonthlyStore : H.saveMonthlyStore;
+    const handler = ({copy: H.copyMonthlyStore, save: H.saveMonthlyStore, copyGroups: H.copyMonthlyGroups, saveGroups: H.saveMonthlyGroups})[button.dataset.monthlyAction];
     if (typeof handler !== 'function') { H.toast('图片导出正在准备，请稍后重试'); return; }
     try {
       const result = handler(button.dataset.store);
@@ -383,6 +402,11 @@
     const ui = state();
     if (control.dataset.monthlyFilter === 'store') { ui.store = control.value; H.render(); }
     if (control.dataset.monthlyFilter === 'month') { ui.month = control.value; H.render(); }
+    if (control.dataset.monthlyFilter === 'display') {
+      const next = control.value === 'groups' ? 'groups' : 'detail';
+      if (next === 'groups' && ui.display !== 'groups') ui.store = '';
+      ui.display = next; H.render();
+    }
     if (control.dataset.monthlyFilter === 'rankMonth') {
       const view = H.monthlyActiveView || currentView(), stores = ui.store ? [ui.store] : view.stores || [];
       if (ui.month || !(view.months || []).includes(control.value)) return;
@@ -430,6 +454,6 @@
   H.render = () => {
     previousRender();
     const badge = document.querySelector('.topbar .pill');
-    if (badge) badge.textContent = '组织管理版 V3.8.2';
+    if (badge) badge.textContent = '组织管理版 V3.9.0';
   };
 })();

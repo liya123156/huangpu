@@ -36,6 +36,9 @@ jobs:
           node tests/current-staff.test.cjs
           node tests/monthly-export.test.cjs
           node tests/monthly-ui.test.cjs
+          node tests/shared-data.test.cjs
+          node tests/shared-sync.test.cjs
+          node tests/shared-backend.test.cjs
       - name: Package static app (code only)
         uses: actions/upload-artifact@v4
         with:
@@ -49,6 +52,7 @@ jobs:
             netlify.toml
             .nojekyll
             tests/
+            supabase/
       - name: Report hosting readiness separately from code validation
         env:
           GH_TOKEN: ${{ github.token }}

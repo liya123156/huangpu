@@ -61,8 +61,8 @@ test('the monthly page renders all hierarchy rows and three months without old e
   assert(!H.html.includes('缺数据不按0'));
   assert(!H.html.includes('0</b> 为底表明确零值'));
   assert(H.html.includes('未记录活动量按'));
-  assert.equal(H.version, '3.8.2');
-  assert.equal(badge.textContent, '组织管理版 V3.8.2');
+  assert.equal(H.version, '3.9.0');
+  assert.equal(badge.textContent, '组织管理版 V3.9.0');
 });
 
 test('unrecorded activity and ratios display as red zero while source marks stay visible', () => {
@@ -153,6 +153,135 @@ function tableMarkup(html) {
   assert(match, 'Expected monthly activity table');
   return match[0];
 }
+
+function groupsSetup() {
+  const app = setup(), {H, view} = app;
+  const stores = ['合成甲店', '合成乙店', '合成丙店', '合成丁店'];
+  const make = node => ({...node, months: Object.fromEntries(months.map((month, index) => [month, {house: 0, owner: index + 1, hmall: 2, channel: 4, entered: 1, rate: .25, view: 5 + index}])), cellMeta: {}});
+  view.stores = stores;
+  view.nodes = [make({id: 'region', level: 'region', label: '合成大区', store: '', parent: null})];
+  view.rankings = {};
+  for (const [storeIndex, store] of stores.entries()) {
+    const storeId = 'store-' + storeIndex;
+    view.nodes.push(make({id: storeId, level: 'store', label: store, store, parent: 'region'}));
+    view.rankings[store] = Object.fromEntries(months.map(month => [month, {...app.ranking, month}]));
+    for (const [groupIndex, letter] of ['A', 'B', 'C', 'D'].entries()) {
+      const group = store + letter + '组', groupId = 'group-' + storeIndex + '-' + groupIndex;
+      view.nodes.push(make({id: groupId, level: 'group', label: letter + '组', store, group, parent: storeId, managerNames: ['合成经理' + storeIndex + groupIndex]}));
+      view.nodes.push(make({id: 'person-' + storeIndex + '-' + groupIndex, level: 'person', label: '合成顾问' + storeIndex + groupIndex, person: '合成顾问' + storeIndex + groupIndex, personId: 'GROUP-SYNTH-' + storeIndex + groupIndex, role: '顾问', store, group, parent: groupId}));
+    }
+  }
+  H.ui.store = stores[0];
+  H.data.facts = view.nodes.filter(node => node.level === 'person').map(node => ({personId: node.personId, store: node.store, group: node.group, metric: 'view', start: '2026-10-01', value: 6}));
+  H.data.novRoster = view.nodes.filter(node => node.level === 'person').map(node => ({personId: node.personId, person: node.person, store: node.store, group: node.group, role: '顾问'}));
+  return {...app, stores};
+}
+
+test('groups display shows sixteen groups in one table and keeps the selected month', () => {
+  const app = groupsSetup(), {H, view} = app;
+  const sourceBefore = JSON.stringify(view), factsBefore = JSON.stringify(H.data.facts);
+  H.render();
+  assert.equal(H.ui.monthlyBoard.display, 'detail');
+  const displaySelect = selectMarkup(H.html, 'monthly-display');
+  assert(displaySelect.attributes.includes('data-monthly-filter="display"'));
+  assert.deepEqual(displaySelect.values, ['detail', 'groups']);
+  assert(displaySelect.content.includes('门店、店组、个人') && displaySelect.content.includes('只看店组'));
+  changeFilter(app, 'month', '2026-10');
+  changeFilter(app, 'display', 'groups');
+  assert.equal(H.ui.monthlyBoard.display, 'groups');
+  assert.equal(H.ui.monthlyBoard.store, '', 'entering the regional group view clears the previous store filter');
+  assert.equal(H.ui.monthlyBoard.month, '2026-10');
+  assert.equal((H.html.match(/<table\b[^>]*class="[^"]*hp-monthly-table/g) || []).length, 1);
+  const table = tableMarkup(H.html);
+  assert.equal((table.match(/<tbody\b[^>]*hp-monthly-level-group/g) || []).length, 16);
+  assert.equal((table.match(/rowspan="1"/g) || []).length, 16);
+  assert(!table.includes('hp-monthly-level-store') && !table.includes('hp-monthly-level-person') && !table.includes('hp-monthly-level-region'));
+  assert(!H.html.includes('id="monthly-ranking-output"'));
+  assert(!H.html.includes('活动量标杆与重点提醒'));
+  assert(!H.html.includes('合成顾问00'));
+  const model = H.monthlyGroupExportModel();
+  assert.equal(model.kind, 'groups');
+  assert.equal(model.store, '黄浦大区');
+  assert.equal(model.rows.length, 16);
+  assert(model.rows.every(row => row.level === 'group'));
+  assert.deepEqual(Array.from(model.months), ['2026-10']);
+  assert.equal(model.ranking, null);
+  assert.equal(model.subtitle, '2026年10月 · 16个店组');
+  for (const row of model.rows) {
+    assert.notEqual(row, view.nodes.find(node => node.id === row.id), 'group labels belong to projected clones, not the source nodes');
+    assert(row.label.includes(row.store));
+    assert(row.label.includes(row.group.slice(row.store.length)));
+    assert(H.monthlyEntityLabel(row).includes(row.managerNames[0]));
+    assert(table.includes(row.managerNames[0]));
+  }
+  assert.equal(JSON.stringify(view), sourceBefore);
+  assert.equal(JSON.stringify(H.data.facts), factsBefore);
+});
+
+test('group filters narrow to four groups, restore three months, and return to the complete detail hierarchy', () => {
+  const app = groupsSetup(), {H, view, stores} = app;
+  const sourceBefore = JSON.stringify(view), factsBefore = JSON.stringify(H.data.facts);
+  H.render();
+  changeFilter(app, 'display', 'groups');
+  assert.equal((tableMarkup(H.html).match(/rowspan="3"/g) || []).length, 16);
+  changeFilter(app, 'month', '2026-10');
+  changeFilter(app, 'store', stores[2]);
+  H.render();
+  assert.equal(H.ui.monthlyBoard.store, stores[2], 'rendering an existing group view must not reset the store again');
+  assert.equal(H.ui.monthlyBoard.month, '2026-10');
+  let exported = H.monthlyGroupExportModel();
+  assert.equal(exported.store, stores[2]);
+  assert.equal(exported.rows.length, 4);
+  assert(exported.rows.every(row => row.store === stores[2] && row.level === 'group'));
+  assert.deepEqual(Array.from(exported.months), ['2026-10']);
+  assert.equal((tableMarkup(H.html).match(/rowspan="1"/g) || []).length, 4);
+  changeFilter(app, 'month', '');
+  exported = H.monthlyGroupExportModel();
+  assert.deepEqual(Array.from(exported.months), months);
+  assert.equal((tableMarkup(H.html).match(/rowspan="3"/g) || []).length, 4);
+  changeFilter(app, 'display', 'detail');
+  assert.equal(H.ui.monthlyBoard.display, 'detail');
+  assert.equal(H.ui.monthlyBoard.store, stores[2]);
+  assert(H.html.includes('id="monthly-ranking-output"'));
+  const detail = H.monthlyExportModel(stores[2]);
+  assert.equal(detail.rows.filter(row => row.level === 'store').length, 1);
+  assert.equal(detail.rows.filter(row => row.level === 'group').length, 4);
+  assert.equal(detail.rows.filter(row => row.level === 'person').length, 4);
+  assert.equal((tableMarkup(H.html).match(/rowspan="3"/g) || []).length, 9);
+  assert.equal(view.nodes.find(node => node.level === 'group').label, 'A组');
+  assert.equal(JSON.stringify(view), sourceBefore);
+  assert.equal(JSON.stringify(H.data.facts), factsBefore);
+});
+
+test('group image buttons dispatch the combined exporters with current filters and column order', async () => {
+  const app = groupsSetup(), {H, stores} = app;
+  H.render();
+  changeFilter(app, 'display', 'groups');
+  changeFilter(app, 'month', '2026-11');
+  changeFilter(app, 'store', stores[1]);
+  const order = ['view', 'house', 'owner', 'hmall', 'channel', 'entered', 'rate'];
+  await H.setMonthlyColumnOrder(order);
+  assert(H.html.includes('data-monthly-action="copyGroups"'));
+  assert(H.html.includes('data-monthly-action="saveGroups"'));
+  const calls = [];
+  H.copyMonthlyGroups = () => calls.push({action: 'copy', model: H.monthlyGroupExportModel()});
+  H.saveMonthlyGroups = () => calls.push({action: 'save', model: H.monthlyGroupExportModel()});
+  H.copyMonthlyStore = () => { throw Error('The group image must not dispatch the detail store exporter'); };
+  H.saveMonthlyStore = H.copyMonthlyStore;
+  const page = {}, button = {dataset: {monthlyAction: 'copyGroups'}};
+  const target = {closest: selector => selector === '#monthly-activity' ? page : selector === '[data-monthly-action]' ? button : null};
+  app.listeners.click({target});
+  button.dataset.monthlyAction = 'saveGroups'; app.listeners.click({target});
+  assert.deepEqual(calls.map(call => call.action), ['copy', 'save']);
+  for (const {model} of calls) {
+    assert.equal(model.kind, 'groups');
+    assert.equal(model.store, stores[1]);
+    assert.equal(model.rows.length, 4);
+    assert.equal(model.ranking, null);
+    assert.deepEqual(Array.from(model.months), ['2026-11']);
+    assert.deepEqual(Array.from(model.columns, column => column.key), order);
+  }
+});
 
 test('month filter starts with all base months and leaves the ranking month independently selectable', () => {
   const app = setup(), {H} = app;

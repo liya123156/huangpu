@@ -1,0 +1,15 @@
+.shared-sync-panel { margin-top: auto; margin-bottom: 10px; border: 1px solid #ffffff35; border-radius: 12px; padding: 13px; color: #eee6fa; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.shared-sync-panel > b { color: #fff; font-size: 14px; }
+.shared-sync-panel p { margin: 6px 0; }
+.shared-sync-panel small { display: block; color: #d8c9ee; font-size: 12px; }
+.shared-sync-status.is-warning { color: #ffe2a7; }
+.shared-sync-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.shared-sync-actions:empty { display: none; }
+.shared-sync-actions button { border: 1px solid #ffffff52; border-radius: 7px; padding: 6px 9px; color: #fff; background: #ffffff14; font-size: 13px; line-height: 1.4; }
+.shared-sync-actions button:hover { background: #ffffff25; }
+body[data-shared-role="editor"] .side-bottom { margin-top: 0; padding: 7px 12px; }
+body[data-shared-role] .side-bottom > b, body[data-shared-role] .side-bottom > p, body[data-shared-role="viewer"] .side-bottom { display: none; }
+.shared-sync-empty { max-width: 900px; margin: 24px auto; padding: 28px; }
+.shared-sync-empty p { color: #73677f; font-size: 16px; line-height: 1.8; }
+@media(max-width:760px) { .shared-sync-panel { margin: 12px 0 0; padding: 10px 12px; } .shared-sync-actions button { min-height: 36px; } }
+@media print { .shared-sync-panel { display: none !important; } }
