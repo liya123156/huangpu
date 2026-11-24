@@ -33,6 +33,7 @@ jobs:
           node tests/org-activity-coverage.test.cjs
           node tests/monthly-import.test.cjs
           node tests/monthly-model.test.cjs
+          node tests/current-staff.test.cjs
           node tests/monthly-export.test.cjs
           node tests/monthly-ui.test.cjs
       - name: Package static app (code only)

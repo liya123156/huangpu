@@ -45,7 +45,7 @@ H.renderMonthlyStorePNG=async model=>{
  if(ranking){
   rankingNotes.push('比较月份：'+monthLabel(model.rankMonth||months.at(-1))+'；按已核对顾问的买卖带看、重点渠道新增两项等权百分位比较，第三位并列全部保留。');
   if(ranking.status!=='separate')rankingNotes.push(ranking.status==='none'?'可比较记录不足，暂不划分前三和后三。':'人数不足、同分或前后范围交叉时，只展示现有数据，不强行划分前三和后三。');
-  if(ranking.missing?.length)rankingNotes.push('资料待补：'+ranking.missing.map(p=>(p.name||p.person)+'（'+(p.missing||[]).join('、')+'）').join('；')+'。缺失未作为0参与排名。');
+  if(ranking.missing?.length)rankingNotes.push('比较口径待核对：'+ranking.missing.map(p=>(p.name||p.person)+'（'+(p.missing||[]).join('、')+'）').join('；')+'。未导入统计来源、来源冲突或周期不同的记录，暂不参与排名。');
  }
  const rankNoteLines=rankingNotes.flatMap(n=>wrap(measure,n,width-pad*2));
  const tableHeight=headerHeight+model.rows.length*months.length*rowHeight;
@@ -83,9 +83,9 @@ H.renderMonthlyStorePNG=async model=>{
    x=pad+widths[0];const fill=month===months.at(-1)?'#f8f5fc':'#ffffff';
    box(x,y,widths[1],rowHeight,fill);center(monthLabel(month),x,y,widths[1],rowHeight,18,'#655a75');x+=widths[1];
    columns.forEach((column,index)=>{
-    const key=column.key||column.id,value=node.months?.[month]?.[key],cell=H.monthlyFormatCell(node,month,key),zero=value===0;
+    const key=column.key||column.id,cell=H.monthlyFormatCell(node,month,key),value=cell.value,zero=cell.zero;
     box(x,y,widths[index+2],rowHeight,zero?'#fcf0f2':fill);
-    center(cell.text,x,y,widths[index+2],rowHeight,20,zero?'#c83245':value===null||value===undefined?'#9a90a6':'#252139',zero);
+    center(cell.text,x,y,widths[index+2],rowHeight,20,zero?'#c83245':value===null||value===undefined?'#93651a':'#252139',zero);
     if(cell.asterisk)text('*',x+widths[index+2]-14,y+5,15,'#a76811');
     x+=widths[index+2];
    });

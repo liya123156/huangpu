@@ -2,7 +2,7 @@
 'use strict';
 (() => {
   const H = HP, E = H.esc;
-  H.version = '3.8';
+  H.version = '3.8.1';
   const KEYS = ['house', 'owner', 'hmall', 'channel', 'entered', 'rate', 'view'];
   const LABELS = {
     house: '新增买卖房源', owner: '业主面见', hmall: 'hmall陪带次数',
@@ -16,6 +16,7 @@
   };
   const SHARES = {house: 10, owner: 9, hmall: 10, channel: 11, entered: 13, rate: 13, view: 10};
   const scopeNote = '个人仅显示当前在职顾问；门店、店组保留当期历史合计。';
+  const zeroNote = '未记录活动量按0；新增与进入带看均为0时，进入带看率按0.0%显示。';
   const kind = {region: '大区', store: '门店', group: '店组', person: '个人'};
   const monthLabel = month => /^\d{4}-\d{2}$/.test(String(month)) ? Number(month.slice(5)) + '月' : String(month || '');
   const periodLabel = months => {
@@ -44,14 +45,18 @@
 
   // These helpers are also used by the image exporter so images and the page agree.
   H.monthlyFormatCell = (node, month, key) => {
-    const value = node?.months?.[month]?.[key];
+    const rawValue = node?.months?.[month]?.[key];
     const meta = node?.cellMeta?.[month]?.[key] || {};
     const asterisk = !!meta.asterisk;
-    const title = meta.note || (meta.status === 'missing' ? '未提供记录' : '');
-    if (!finite(value)) return {text: '—', value: null, zero: false, asterisk, title, className: 'hp-monthly-missing'};
+    if (meta.status === 'conflict' || (rawValue != null && !finite(rawValue))) return {
+      text: '待核对', value: null, zero: false, pending: true, asterisk,
+      title: meta.note || '来源数值存在异常，请核对后再比较', className: 'hp-monthly-missing'
+    };
+    const value = rawValue == null ? 0 : rawValue;
+    const title = meta.note || (rawValue == null ? '未记录活动量，按0显示' : '');
     return {
       text: key === 'rate' ? (value * 100).toFixed(1) + '%' : number(value),
-      value, zero: value === 0, asterisk, title,
+      value, zero: value === 0, pending: false, asterisk, title,
       className: value === 0 ? 'hp-monthly-zero' : ''
     };
   };
@@ -153,7 +158,7 @@
       title: store + '｜活动量月度对比',
       subtitle: periodLabel(months), store, months, columns: columns(),
       rows: storeRows(view, store),
-      notes: [scopeNote, '0为底表明确零值；—为未提供记录或比率无法计算。', ...sourceNotes(view)],
+      notes: [scopeNote, zeroNote, ...sourceNotes(view)],
       sourceCutoff: view.sourceCutoff || '',
       rankMonth, ranking: view.rankings?.[store]?.[rankMonth] || (H.monthlyRanking ? H.monthlyRanking({store, month: rankMonth}) : null)
     };
@@ -188,7 +193,10 @@
       ).join('') + '</section>').join('') + '</div>';
   };
   const exportButtons = (store, primary) => '<div class="hp-monthly-image-actions"><button class="btn' + (primary ? ' primary' : '') + '" type="button" data-monthly-action="copy" data-store="' + E(store) + '">' + (primary ? '复制本店图片' : '复制图片') + '</button><button class="btn" type="button" data-monthly-action="save" data-store="' + E(store) + '">保存图片</button></div>';
-  const amount = value => finite(value) ? '<b' + (value === 0 ? ' class="hp-monthly-zero"' : '') + '>' + number(value) + '</b>' : '<b class="hp-monthly-missing">—</b>';
+  const amount = rawValue => {
+    const value = rawValue == null ? 0 : rawValue;
+    return finite(value) ? '<b' + (value === 0 ? ' class="hp-monthly-zero"' : '') + '>' + number(value) + '</b>' : '<b class="hp-monthly-missing">待核对</b>';
+  };
   const rankCard = (person, ranking, direction) => {
     const place = direction === 'bottom' ? (person.ties > 1 ? '并列' : '') + '倒数第' + person.bottomRank : (person.ties > 1 ? '并列' : '') + '第' + person.rank + '名';
     return '<article class="hp-monthly-rank-item"><div class="hp-monthly-rank-name"><strong>' + E(person.name || person.person || '') + '</strong><span>' + E(person.group || '') + '</span><small>' + E(place) + '</small></div>' +
@@ -204,12 +212,12 @@
       content = '<div class="hp-monthly-rank-grid"><section class="hp-monthly-rank-panel"><h4>标杆前三名' + (top.length > 3 ? '<small>含并列</small>' : '') + '</h4>' + top.map(person => rankCard(person, ranking, 'top')).join('') + (top.length > 3 ? '<p class="hp-monthly-tie-note">第3位边界同分，共展示' + top.length + '人。</p>' : '') + '</section>' +
         '<section class="hp-monthly-rank-panel hp-monthly-rank-low"><h4>后三名 · 重点提醒' + (bottom.length > 3 ? '<small>含并列</small>' : '') + '</h4>' + bottom.map(person => rankCard(person, ranking, 'bottom')).join('') + (bottom.length > 3 ? '<p class="hp-monthly-tie-note">第3位边界同分，共展示' + bottom.length + '人。</p>' : '') + '</section></div>';
     } else {
-      const messages = {none: '暂无两项数据均齐全的顾问。', tied: '本月参评顾问综合分相同，暂不区分前三、后三。', small: '参评人数不足6人，按活动量顺序展示全部人员。', overlap: '前三、后三的边界出现同分，按活动量顺序展示并保留并列。'};
+      const messages = {none: '暂无可比较的顾问数据，请核对来源与统计截止。', tied: '本月参评顾问综合分相同，暂不区分前三、后三。', small: '参评人数不足6人，按活动量顺序展示全部人员。', overlap: '前三、后三的边界出现同分，按活动量顺序展示并保留并列。'};
       content = '<section class="hp-monthly-rank-panel"><p class="hp-monthly-rank-status">' + E(messages[ranking.status] || '按本月已提供数据展示。') + '</p>' + all.map(person => rankCard(person, ranking, 'all')).join('') + '</section>';
     }
     return '<section class="hp-monthly-store-review"><h3>' + E(store) + ' · ' + E(monthLabel(month)) + '</h3>' +
-      '<p class="hp-monthly-coverage">当前在职顾问中，' + Number(ranking.count || 0) + '人两项数据齐全' + (missing.length ? '，' + missing.length + '人待补数据' : '') + '。</p>' + content +
-      (missing.length ? '<p class="hp-monthly-rank-missing"><strong>数据待补：</strong>' + missing.map(person => E((person.name || person.person || '') + '（缺' + (person.missing || []).join('、') + '）')).join('；') + '。以上人员未计入后三名。</p>' : '') + '</section>';
+      '<p class="hp-monthly-coverage">当前在职顾问中，' + Number(ranking.count || 0) + '人参与比较' + (missing.length ? '，' + missing.length + '人待核对' : '') + '。</p>' + content +
+      (missing.length ? '<p class="hp-monthly-rank-missing"><strong>待核对：</strong>' + missing.map(person => E((person.name || person.person || '') + '（' + (person.missing || []).join('、') + '）')).join('；') + '。以上人员暂不参与排名。</p>' : '') + '</section>';
   }).join('');
 
   H.renderActivity = () => {
@@ -232,9 +240,9 @@
       (!selected && region.length ? '<section class="hp-monthly-section hp-monthly-region"><div class="hp-monthly-section-head"><h2>黄浦大区合计</h2></div>' + tableHTML(region, months, '') + '</section>' : '') +
       shownStores.map(store => '<section class="hp-monthly-section" data-monthly-store="' + E(store) + '"><div class="hp-monthly-section-head"><h2>' + E(store) + '</h2>' + (!selected ? exportButtons(store, false) : '') + '</div>' + tableHTML(storeRows(view, store), months, store) + '</section>').join('') +
       (!shownStores.length ? '<section class="hp-monthly-empty"><p>导入活动量底表后，在这里查看三个月的门店、店组和个人数据。</p><button class="btn primary" type="button" data-monthly-action="import">前往数据导入</button></section>' : '') +
-      '<p class="hp-monthly-legend"><b class="hp-monthly-zero">0</b> 为底表明确零值；<span class="hp-monthly-missing">—</span> 为未提供记录或比率无法计算。</p>' +
+      '<p class="hp-monthly-legend">未记录活动量按<b class="hp-monthly-zero">0</b>；新增与进入带看均为0时，进入带看率按<b class="hp-monthly-zero">0.0%</b>显示。</p>' +
       '<section class="hp-monthly-review" aria-label="门店顾问活动量前三与后三"><div class="hp-monthly-review-head"><h2>活动量标杆与重点提醒</h2><label for="monthly-rank-month">评选月份<select id="monthly-rank-month" data-monthly-filter="rankMonth">' + months.map(month => '<option value="' + E(month) + '"' + (month === ui.rankMonth ? ' selected' : '') + '>' + E(monthLabel(month)) + '</option>').join('') + '</select></label></div>' +
-      '<p class="hp-monthly-rule">买卖带看、重点渠道新增分别在同店顾问中排名，各占50%。第3位同分者一并展示；缺数据不按0计算。</p>' +
+      '<p class="hp-monthly-rule">买卖带看、重点渠道新增分别在同店顾问中排名，各占50%。第3位同分者一并展示；未记录活动量按0。对应月份来源未导入、统计截止不一致或来源冲突时，暂不比较。</p>' +
       '<div id="monthly-ranking-output" aria-live="polite">' + rankingHTML(view, shownStores, ui.rankMonth) + '</div></section>' +
       '<footer class="hp-monthly-notes"><p>' + scopeNote + '</p><p>数据依据说明活动表现，具体原因需结合沟通了解。</p>' + notes.map(note => '<p>' + E(note) + '</p>').join('') + '</footer>' +
       '<span id="monthly-order-status" class="hp-monthly-sr-only" role="status" aria-live="polite"></span></div>';
@@ -408,6 +416,6 @@
   H.render = () => {
     previousRender();
     const badge = document.querySelector('.topbar .pill');
-    if (badge) badge.textContent = '组织管理版 V3.8';
+    if (badge) badge.textContent = '组织管理版 V3.8.1';
   };
 })();

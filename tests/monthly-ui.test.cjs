@@ -19,7 +19,7 @@ function setup(saved = {}) {
   ];
   const nodes = base.map(node => ({...node, months: Object.fromEntries(months.map(month => [month, {...values}])), cellMeta: {'2026-10': {owner: {asterisk: true, note: '统计范围待核对'}}}}));
   const item = {name: '合成顾问', group: 'A组', values: {view: 7, channel: 4}, parts: {view: {rank: 1, percentile: 100, median: 3}, channel: {rank: 2, percentile: 75, median: 2}}, score: 87.5, rank: 1, bottomRank: 7, ties: 1};
-  const ranking = {count: 7, eligible: 8, status: 'separate', all: [item], top: [item], bottom: [{...item, name: '合成提醒', values: {view: 0, channel: 0}, rank: 7, bottomRank: 1}], missing: [{name: '合成待补', missing: ['买卖带看']}], notJoined: []};
+  const ranking = {count: 7, eligible: 8, status: 'separate', all: [item], top: [item], bottom: [{...item, name: '合成提醒', values: {view: 0, channel: 0}, rank: 7, bottomRank: 1}], missing: [{name: '合成待核', missing: ['买卖带看来源未导入']}], notJoined: []};
   const view = {months, stores: ['合成门店'], nodes, rankings: {'合成门店': Object.fromEntries(months.map(month => [month, ranking]))}, notes: ['只按已经提供的数据展示。'], sourceCutoff: '2026-11-22'};
   const document = {
     addEventListener: (name, callback) => { listeners[name] = callback; },
@@ -58,22 +58,44 @@ test('the monthly page renders all hierarchy rows and three months without old e
   assert(H.html.includes('<span class="hp-monthly-manager"> · 合成经理</span>'));
   assert(H.html.includes('个人仅显示当前在职顾问；门店、店组保留当期历史合计。'));
   assert.equal(H.currentModel, null);
-  assert.equal(H.version, '3.8');
-  assert.equal(badge.textContent, '组织管理版 V3.8');
+  assert(!H.html.includes('缺数据不按0'));
+  assert(!H.html.includes('0</b> 为底表明确零值'));
+  assert(H.html.includes('未记录活动量按'));
+  assert.equal(H.version, '3.8.1');
+  assert.equal(badge.textContent, '组织管理版 V3.8.1');
 });
 
-test('true zero, missing, ratio denominator and source marks remain distinct', () => {
+test('unrecorded activity and ratios display as red zero while source marks stay visible', () => {
   const {H, nodes} = setup();
   assert.equal(H.monthlyFormatCell(nodes[3], months[0], 'house').zero, true);
-  assert.equal(H.monthlyFormatCell(nodes[3], months[0], 'hmall').text, '—');
-  assert.equal(H.monthlyFormatCell(nodes[3], months[0], 'hmall').zero, false);
+  assert.equal(H.monthlyFormatCell(nodes[3], months[0], 'hmall').text, '0');
+  assert.equal(H.monthlyFormatCell(nodes[3], months[0], 'hmall').zero, true);
+  assert.equal(H.monthlyFormatCell(nodes[3], months[0], 'hmall').className, 'hp-monthly-zero');
+  assert.equal(H.monthlyFormatCell({}, 'm', 'view').value, 0);
   assert.equal(H.monthlyFormatCell(nodes[3], months[0], 'rate').text, '25.0%');
-  assert.equal(H.monthlyFormatCell({months: {m: {rate: null}}}, 'm', 'rate').text, '—');
+  assert.equal(H.monthlyFormatCell({months: {m: {rate: null}}}, 'm', 'rate').text, '0.0%');
+  assert.equal(H.monthlyFormatCell({}, 'm', 'rate').text, '0.0%');
   assert.equal(H.monthlyFormatCell({months: {m: {rate: 0}}}, 'm', 'rate').text, '0.0%');
   const marked = H.monthlyFormatCell(nodes[3], months[1], 'owner');
   assert.equal(marked.asterisk, true);
   assert.equal(marked.text, '2');
   assert.equal(marked.title, '统计范围待核对');
+});
+
+test('source conflicts and invalid values remain pending instead of becoming zero', () => {
+  const {H} = setup();
+  const conflicted = {months: {m: {view: null, rate: 0}}, cellMeta: {m: {view: {status: 'conflict', note: '同一周期来源不一致'}, rate: {status: 'conflict'}}}};
+  for (const key of ['view', 'rate']) {
+    const cell = H.monthlyFormatCell(conflicted, 'm', key);
+    assert.equal(cell.text, '待核对');
+    assert.equal(cell.value, null);
+    assert.equal(cell.zero, false);
+    assert.equal(cell.pending, true);
+    assert.notEqual(cell.className, 'hp-monthly-zero');
+  }
+  assert.equal(H.monthlyFormatCell(conflicted, 'm', 'view').title, '同一周期来源不一致');
+  assert.equal(H.monthlyFormatCell({months: {m: {view: NaN}}}, 'm', 'view').text, '待核对');
+  assert.equal(H.monthlyFormatCell({months: {m: {view: '错误'}}}, 'm', 'view').text, '待核对');
 });
 
 test('moving a column moves its values, keeps two fixed columns, persists and survives reload', async () => {
@@ -116,18 +138,23 @@ test('store filter keeps all-store selection independent of the old page filter'
   assert(!H.html.includes('<h2>黄浦大区合计</h2>'));
 });
 
-test('rankings use the model cohort, keep missing people out of the bottom group, and export the same month', () => {
+test('rankings label source problems as pending and export the same selected month', () => {
   const {H} = setup();
   H.render();
   const rankingHTML = H.html.slice(H.html.indexOf('<section class="hp-monthly-review"'));
   assert(!rankingHTML.includes('合成经理'));
-  assert(rankingHTML.includes('合成待补（缺买卖带看）'));
-  assert(rankingHTML.includes('以上人员未计入后三名'));
+  assert(rankingHTML.includes('合成待核（买卖带看来源未导入）'));
+  assert(rankingHTML.includes('以上人员暂不参与排名'));
+  assert(rankingHTML.includes('人参与比较'));
+  assert(rankingHTML.includes('待核对：'));
+  assert(!rankingHTML.includes('数据待补'));
   assert(rankingHTML.includes('数据依据：'));
   H.ui.monthlyBoard.rankMonth = '2026-10';
   const model = H.monthlyExportModel('合成门店');
   assert.equal(model.rankMonth, '2026-10');
   assert.equal(model.ranking.count, 7);
+  assert(model.notes.includes('未记录活动量按0；新增与进入带看均为0时，进入带看率按0.0%显示。'));
+  assert(!model.notes.some(note => note.includes('—为未提供') || note.includes('明确零值')));
   assert(H.monthlyRankReason(model.ranking.bottom[0], model.ranking, 'bottom').includes('买卖带看为0'));
 });
 
@@ -252,7 +279,7 @@ test('the real monthly model connects to the page, rankings, backup order and im
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../assets/monthly-model.js'), 'utf8'), sandbox);
   H.data = H.empty();
   const store = '合成集成店', group = store + 'A组';
-  H.data.novRoster = Array.from({length: 8}, (_, i) => ({personId: 'SYNTH-' + i, person: i === 6 ? '合成经理' : i === 7 ? '合成待补' : '合成顾问' + i, store, group, role: i === 6 ? '店经理' : '顾问', joinDate: '2020-01-01'}));
+  H.data.novRoster = Array.from({length: 8}, (_, i) => ({personId: 'SYNTH-' + i, person: i === 6 ? '合成经理' : i === 7 ? '合成未记录' : '合成顾问' + i, store, group, role: i === 6 ? '店经理' : '顾问', joinDate: '2020-01-01'}));
   const metrics = ['newhouse', 'ownermeet', 'hmallassist', 'channel', 'channelMonthEntered', 'view'];
   for (const month of months) for (let i = 0; i < 7; i++) for (const metric of metrics) {
     const person = H.data.novRoster[i], end = month === '2026-09' ? month + '-30' : month === '2026-10' ? month + '-31' : month + '-22';
@@ -268,11 +295,14 @@ test('the real monthly model connects to the page, rankings, backup order and im
   const groupNode = model.rows.find(row => row.level === 'group');
   assert.equal(H.monthlyEntityLabel(groupNode), 'A组 · 合成经理');
   assert.equal(groupNode.months['2026-11'].view, 28, 'hiding the manager row must not delete source contributions');
-  assert.equal(model.ranking.count, 6);
-  assert.equal(model.ranking.missing.length, 1);
-  assert.equal(model.ranking.missing[0].name, '合成待补');
+  assert.equal(model.ranking.count, 7);
+  assert.equal(model.ranking.missing.length, 0);
+  assert(model.ranking.all.some(person => person.name === '合成未记录' && person.values.view === 0 && person.values.channel === 0));
   assert(!model.ranking.all.some(person => person.name === '合成经理'));
-  assert.equal(model.rows.find(node => node.person === '合成待补').months['2026-11'].view, null);
+  const unrecorded = model.rows.find(node => node.person === '合成未记录');
+  assert.equal(unrecorded.months['2026-11'].view, 0);
+  assert.equal(unrecorded.months['2026-11'].rate, 0);
+  assert.equal(H.monthlyFormatCell(unrecorded, '2026-11', 'rate').text, '0.0%');
   assert.equal(model.columns.find(column => column.key === 'entered').label, '重点渠道当月进入带看');
   assert.equal(model.columns.find(column => column.key === 'hmall').label, 'hmall陪带次数');
   const order = ['rate', 'view', 'house', 'owner', 'hmall', 'channel', 'entered'];

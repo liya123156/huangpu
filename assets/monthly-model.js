@@ -126,11 +126,36 @@ function makeContext(options={}){
   const pk=coverageKey(f.store||'*',key,month);if(!periods.has(pk))periods.set(pk,[]);periods.get(pk).push({...f,_grain:grain});
  }
  const isVisiblePerson=node=>currentConsultants.some(r=>r.store===node.store&&(node.personId?r.personId===node.personId:!r.personId&&r.group===node.group&&r.person===node.person));
- const ctx={options,allFacts,facts,roster,currentRoster,currentConsultants,rosterIds,rosterNames,currentRosterNames,coverage,anchor,months,endMonth,stores,nodes,index,children,periods,cache:new Map(),staffFor,isVisiblePerson};
+ const ctx={options,allFacts,facts,roster,currentRoster,currentConsultants,rosterIds,rosterNames,currentRosterNames,coverage,anchor,months,endMonth,stores,nodes,index,children,periods,cache:new Map(),scopeCache:new Map(),staffFor,isVisiblePerson};
  return ctx;
 }
 const missingCell=note=>({n:null,facts:[],grain:'',status:'missing',note:note||'未提供对应月份数据',asterisk:false,signature:'',comparable:false});
 const conflictCell=(facts,note)=>({n:null,facts,grain:facts[0]?._grain||'',status:'conflict',note,asterisk:true,signature:'',comparable:false});
+// A user-confirmed zero is a presentation/analysis convention, never a fabricated
+// source row. Its scope must come from an imported dataset for this store/month.
+function sourceScope(node,key,month,ctx){
+ const id=coverageKey(node.store||'*',key,month);if(ctx.scopeCache.has(id))return ctx.scopeCache.get(id);
+ const monthlyEntry=node.store?ctx.coverage.map.get(id):null,available=ctx.periods.get(id)||[];
+ let sourceFacts=[],grain='';
+ if(monthlyEntry){
+  grain='monthly';const inMonth=monthlyEntry.facts.filter(f=>factMonth(f,ctx.anchor)===month);
+  const sameMetric=inMonth.filter(f=>metricKey.get(f.metric)===key),relevant=sameMetric.length?sameMetric:inMonth;
+  const inStore=relevant.filter(f=>!f.store||f.store===node.store);sourceFacts=inStore.length?inStore:relevant;
+ }else if(available.length){grain=available.some(f=>f._grain==='monthly')?'monthly':available.some(f=>f._grain==='weekly')?'weekly':'snapshot';sourceFacts=available.filter(f=>f._grain===grain);}
+ const covered=!!monthlyEntry||sourceFacts.length>0,observations=unique(sourceFacts.map(through)),known=sourceFacts.length>0&&observations.every(Boolean),unknown=sourceFacts.some(f=>f.coverageConfirmed===false);
+ const periods=unique(sourceFacts.map(f=>f.start+'|'+f.end+'@'+through(f))).sort(),cutoffs=new Map();
+ for(const f of sourceFacts){const p=f.start+'|'+f.end;if(!cutoffs.has(p))cutoffs.set(p,new Set());cutoffs.get(p).add(through(f));}
+ const aligned=grain==='monthly'?observations.length===1:[...cutoffs.values()].every(d=>d.size===1);
+ const observedThrough=observations.filter(Boolean).sort().at(-1)||'',signature=grain==='monthly'?'monthly|'+month+'|'+(aligned&&known?observations[0]:'unknown'):grain?grain+'|'+periods.join(';'):'';
+ const evidence=unique((sourceFacts.length?sourceFacts:monthlyEntry?.facts||[]).map(f=>JSON.stringify({source:sourceDescription(f),sourceHash:f.sourceHash||'',sourceKind:f.sourceKind||f.periodType||'',month,observedThrough:factMonth(f,ctx.anchor)===month?through(f):'',importedAt:f.importedAt||f.importedOn||''}))).map(s=>JSON.parse(s));
+ const note=unique(sourceFacts.map(f=>f.coverageNote||'').filter(Boolean));if(covered&&!known)note.push('来源未明确本月统计截止');if(known&&!aligned)note.push('同一来源范围的统计截止不一致，待核对');
+ const result={sourceCovered:covered,coverageKnown:known&&aligned,grain,signature,observedThrough,comparable:covered&&known&&aligned&&!unknown,coverageTokens:covered&&signature?[JSON.stringify([node.store||'*',signature])]:[],sourceEvidence:evidence,sourceKinds:unique(sourceFacts.map(f=>f.sourceKind||f.periodType||'')),periods,note:note.join('；'),asterisk:sourceFacts.some(f=>f.displayAsterisk===true),unknown};
+ ctx.scopeCache.set(id,result);return result;
+}
+function assumedZero(node,key,month,ctx){
+ const scope=sourceScope(node,key,month,ctx);
+ return {...scope,n:0,facts:[],assumedZero:true,status:scope.sourceCovered?'assumed-zero':'not-imported',note:[scope.sourceCovered?'该对象未记录活动量，按已确认口径记0':'本月未导入此指标来源，0仅供显示，不参与排名',scope.note].filter(Boolean).join('；')};
+}
 function pickDirect(facts,node,key,month,ctx){
  if(!facts.length)return null;
  const hasMonthly=node.store?ctx.coverage.map.has(coverageKey(node.store,key,month)):facts.some(f=>f._grain==='monthly');
@@ -147,21 +172,21 @@ function pickDirect(facts,node,key,month,ctx){
   selected=[...map.values()].sort((a,b)=>a.start.localeCompare(b.start));
   for(let i=1;i<selected.length;i++)if(selected[i].start<=selected[i-1].end)return conflictCell(facts,'来源期间重叠，不能重复累计');
  }
- const observed=unique(selected.map(through)),observationKnown=selected.every(f=>!!through(f)),lastObserved=observed.filter(Boolean).sort().at(-1)||'',sourceNotes=unique(selected.map(f=>f.coverageNote||'').filter(Boolean)),unknown=selected.some(f=>f.coverageConfirmed===false),partial=grain==='weekly'||unknown||selected.some(f=>f.periodComplete===false||through(f)&&through(f)<monthEnd(month));
+ const scopeInfo=sourceScope(node,key,month,ctx),observed=unique(selected.map(through)),observationKnown=selected.every(f=>!!through(f)),lastObserved=observed.filter(Boolean).sort().at(-1)||'',sourceNotes=unique(selected.map(f=>f.coverageNote||'').filter(Boolean)),unknown=selected.some(f=>f.coverageConfirmed===false),partial=grain==='weekly'||unknown||selected.some(f=>f.periodComplete===false||through(f)&&through(f)<monthEnd(month));
  const expected=grain==='weekly'?unique(scope.filter(f=>f._grain==='weekly').map(f=>f.start+'|'+f.end+'@'+through(f))).sort():[];
  const given=selected.map(f=>f.start+'|'+f.end+'@'+through(f)).sort(),missing=expected.filter(p=>!given.includes(p));
- const signature=grain==='monthly'?'monthly|'+month+'|'+(observed[0]||'unknown'):grain+'|'+given.join(';');
- let note=sourceNotes.join('；');if(grain==='weekly')note=[note,'按已导入周累计；'+(missing.length?'缺少'+missing.length+'个共同周记录':'保留原周归月规则')].filter(Boolean).join('；');
+ const signature=grain==='monthly'?'monthly|'+month+'|'+(observed[0]||'unknown'):scopeInfo.signature||grain+'|'+given.join(';');
+ let note=sourceNotes.join('；');if(grain==='weekly')note=[note,'按已导入周累计；'+(missing.length?'该对象有'+missing.length+'个已导入周未记录，按已确认口径记0':'保留原周归月规则')].filter(Boolean).join('；');
  if(!observationKnown)note=[note,'来源未明确日级截止'].filter(Boolean).join('；');
- return {n:selected.reduce((sum,f)=>sum+f.value,0),facts:selected,grain,status:unknown?'unconfirmed':partial?'partial':'ok',note,asterisk:selected.some(f=>f.displayAsterisk===true),observedThrough:lastObserved,signature,comparable:!unknown&&observationKnown&&(grain!=='monthly'||observed.length===1)&&!missing.length,missingPeriods:missing,sourceKinds:unique(selected.map(f=>f.sourceKind||f.periodType||''))};
+ return {n:selected.reduce((sum,f)=>sum+f.value,0),facts:selected,grain,status:unknown?'unconfirmed':partial?'partial':'ok',note,asterisk:selected.some(f=>f.displayAsterisk===true),observedThrough:grain==='weekly'?scopeInfo.observedThrough:lastObserved,signature,comparable:!unknown&&observationKnown&&(grain!=='monthly'||observed.length===1)&&scopeInfo.comparable,missingPeriods:missing,assumedZero:grain==='weekly'&&missing.length>0,assumedZeroPeriods:missing,sourceCovered:true,coverageKnown:observationKnown&&scopeInfo.coverageKnown,coverageTokens:[JSON.stringify([node.store||'*',signature])],sourceEvidence:scopeInfo.sourceEvidence,sourceKinds:unique(selected.map(f=>f.sourceKind||f.periodType||''))};
 }
 function combined(values,note=''){
  const conflicts=values.filter(v=>v.status==='conflict');if(conflicts.length)return conflictCell(conflicts.flatMap(v=>v.facts),unique(conflicts.map(v=>v.note)).join('；'));
- const known=values.filter(v=>v.n!==null&&Number.isFinite(v.n));if(!known.length)return missingCell(note||'未提供对应月份数据');
+ const known=values.filter(v=>v.n!==null&&Number.isFinite(v.n));if(!known.length)return {...missingCell(note||'本月未导入对应来源，0仅供显示，不参与排名'),n:0,status:'not-imported',assumedZero:true,sourceCovered:false,coverageTokens:[],sourceEvidence:[]};
  const facts=known.flatMap(v=>v.facts),grains=unique(known.map(v=>v.grain)),signatures=unique(known.map(v=>v.signature)),dates=unique(known.map(v=>v.observedThrough||'')),notes=unique(known.map(v=>v.note).filter(Boolean));
- if(known.length<values.length)notes.push('仅累计已提供记录，未出现的人员记录不补0');
+ if(known.some(v=>v.assumedZero))notes.push('未记录活动量按已确认口径记0');
  if(dates.length>1)notes.push('成员来源截止不一致，保留已提供数值');
- return {n:known.reduce((sum,v)=>sum+v.n,0),facts,grain:grains.length===1?grains[0]:'mixed',status:known.some(v=>v.status==='unconfirmed')?'unconfirmed':known.length<values.length||known.some(v=>v.status!=='ok')?'partial':'ok',note:unique([note,...notes].filter(Boolean)).join('；'),asterisk:known.some(v=>v.asterisk),observedThrough:dates.length===1?dates[0]:'',signature:signatures.length===1?signatures[0]:'mixed',comparable:known.length===values.length&&known.every(v=>v.comparable)&&signatures.length===1,sourceKinds:unique(known.flatMap(v=>v.sourceKinds||[]))};
+ return {n:known.reduce((sum,v)=>sum+v.n,0),facts,grain:grains.length===1?grains[0]:'mixed',status:known.every(v=>v.sourceCovered===false)?'not-imported':known.some(v=>v.status==='unconfirmed')?'unconfirmed':known.length<values.length||known.some(v=>v.status!=='ok')?'partial':'ok',note:unique([note,...notes].filter(Boolean)).join('；'),asterisk:known.some(v=>v.asterisk),observedThrough:dates.length===1?dates[0]:'',signature:signatures.length===1?signatures[0]:'mixed',comparable:known.length===values.length&&known.every(v=>v.comparable)&&signatures.length===1,sourceKinds:unique(known.flatMap(v=>v.sourceKinds||[])),assumedZero:known.some(v=>v.assumedZero),sourceCovered:known.every(v=>v.sourceCovered!==false),coverageKnown:known.every(v=>v.coverageKnown),coverageTokens:unique(known.flatMap(v=>v.coverageTokens||[])).sort(),sourceEvidence:unique(known.flatMap(v=>v.sourceEvidence||[]).map(e=>JSON.stringify(e))).map(e=>JSON.parse(e))};
 }
 function cell(node,key,month,ctx){
  const id=JSON.stringify([node.id,key,month]);if(ctx.cache.has(id))return ctx.cache.get(id);
@@ -169,22 +194,24 @@ function cell(node,key,month,ctx){
  if(key==='rate'){
   const denominator=cell(node,'channel',month,ctx),numerator=cell(node,'entered',month,ctx);
   if(denominator.status==='conflict'||numerator.status==='conflict')result=conflictCell([...denominator.facts,...numerator.facts],'新增或进入带看存在冲突，暂不计算比率');
-  else if(denominator.n===null||numerator.n===null)result=missingCell('缺少对应新增量或进入带看量，不计算比率');
-  else if(denominator.n<=0)result={...missingCell('重点渠道新增为0，进入带看率不适用'),status:'not-applicable'};
+  else if(denominator.n===null||numerator.n===null)result=conflictCell([...denominator.facts,...numerator.facts],'新增量或进入带看量不可用，暂不计算比率');
+  else if(denominator.n<0||numerator.n<0||denominator.n===0&&numerator.n>0)result=conflictCell([...denominator.facts,...numerator.facts],denominator.n===0?'进入带看大于0但重点渠道新增为0，待核对':'新增量或进入带看量为负数，待核对');
+  else if(!denominator.sourceCovered||!numerator.sourceCovered)result={...combined([numerator,denominator]),n:0,status:'not-imported',sourceCovered:false,comparable:false,numerator:numerator.n,denominator:denominator.n,note:'本月尚未导入对应新增量或进入带看来源，0.0%仅供显示'};
   else {
-   const coverage=v=>unique(v.facts.map(f=>[f.level,f.store,f.group,f.personId||f.person||'',f.start,f.end,through(f)].join('|'))).sort().join(';');
-   if(coverage(denominator)!==coverage(numerator))result=missingCell('分子和分母的人员或统计期间不同，不计算比率');
+   const coverage=v=>(v.coverageTokens||[]).slice().sort().join(';');
+   if(!coverage(denominator)||coverage(denominator)!==coverage(numerator)||!denominator.coverageKnown||!numerator.coverageKnown)result=conflictCell([...denominator.facts,...numerator.facts],'分子和分母的来源覆盖或统计截止不一致，暂不计算比率');
+   else if(denominator.n===0)result={...combined([numerator,denominator]),n:0,numerator:0,denominator:0,status:'zero-denominator',note:'重点渠道新增与进入带看均为0，按展示约定显示0.0%（无新增）',comparable:false};
    else result={...combined([numerator,denominator]),n:numerator.n/denominator.n,numerator:numerator.n,denominator:denominator.n,comparable:false};
   }
  }else{
   const direct=pickDirect(ctx.index.get(id)||[],node,key,month,ctx);
   if(direct)result=direct;
-  else if(node.level==='person')result=missingCell();
-  else result=combined((ctx.children.get(node.id)||[]).map(child=>cell(ctx.nodes.get(child),key,month,ctx)));
+  else if(node.level==='person')result=assumedZero(node,key,month,ctx);
+  else {const children=ctx.children.get(node.id)||[];result=children.length?combined(children.map(child=>cell(ctx.nodes.get(child),key,month,ctx))):assumedZero(node,key,month,ctx);}
  }
  ctx.cache.set(id,result);return result;
 }
-const cellMetadata=value=>({status:value.status,note:value.note||'',asterisk:!!value.asterisk,observedThrough:value.observedThrough||'',sourceKind:(value.sourceKinds||[]).join(' / '),grain:value.grain||'',sources:unique((value.facts||[]).map(sourceDescription)),sourcePeriods:unique((value.facts||[]).map(f=>[f.sourceStart||f.start||'',f.sourceEnd||f.end||''].join('至'))),comparable:!!value.comparable});
+const cellMetadata=value=>({status:value.status,note:value.note||'',asterisk:!!value.asterisk,observedThrough:value.observedThrough||'',sourceKind:(value.sourceKinds||[]).join(' / '),grain:value.grain||'',sources:unique([...(value.facts||[]).map(sourceDescription),...(value.sourceEvidence||[]).map(e=>e.source)]),sourcePeriods:unique((value.facts||[]).map(f=>[f.sourceStart||f.start||'',f.sourceEnd||f.end||''].join('至'))),comparable:!!value.comparable,assumedZero:!!value.assumedZero,sourceCovered:!!value.sourceCovered,sourceEvidence:value.sourceEvidence||[],assumedZeroPeriods:value.assumedZeroPeriods||[]});
 const median=values=>{const a=values.slice().sort((x,y)=>x-y),mid=Math.floor(a.length/2);return a.length%2?a[mid]:(a[mid-1]+a[mid])/2;};
 function ranking(store,month,ctx){
  const result={store,month,count:0,eligible:0,eligibleCount:0,missing:[],notJoined:[],all:[],top:[],bottom:[],status:'none',rule:{metrics:['view','channel'],weights:[1,1],method:'percentileMean'},through:'',tieNote:'第三位并列全部保留，人数可能超过3人'};
@@ -203,12 +230,13 @@ function ranking(store,month,ctx){
    const value=combined(records);sourceValues[key]=value;
    if(value.n===null)missing.push(key==='view'?'买卖带看'+(value.status==='conflict'?'来源冲突':''):'重点渠道新增'+(value.status==='conflict'?'来源冲突':''));
    else if(value.n<0)missing.push((key==='view'?'买卖带看':'重点渠道新增')+'为负数待核');
-   else if(!value.comparable)missing.push((key==='view'?'买卖带看':'重点渠道新增')+'周期／截止待补齐');
+   else if(!value.sourceCovered)missing.push((key==='view'?'买卖带看':'重点渠道新增')+'本月尚未导入来源');
+   else if(!value.comparable)missing.push((key==='view'?'买卖带看':'重点渠道新增')+'周期／截止待核对');
    else values[key]=value.n;
   }
   if(!missing.length&&sourceValues.view.signature!==sourceValues.channel.signature)missing.push('两项指标统计周期或截止不一致');
   if(missing.length){result.missing.push({name:r.person,group,personId:r.personId,missing,values:{view:sourceValues.view.n,channel:sourceValues.channel.n}});continue;}
-  complete.push({personId:r.personId,name:r.person,group,values,signature:sourceValues.view.signature,sourceGroups:unique(nodes.filter(n=>['view','channel'].some(k=>cell(n,k,month,ctx).n!==null)).map(n=>n.group))});
+  complete.push({personId:r.personId,name:r.person,group,values,signature:sourceValues.view.signature,assumedZeroMetrics:['view','channel'].filter(k=>sourceValues[k].assumedZero),sourceGroups:unique(nodes.filter(n=>['view','channel'].some(k=>cell(n,k,month,ctx).facts.length)).map(n=>n.group))});
  }
  const signatures=unique(complete.map(p=>p.signature));
  if(signatures.length>1){for(const p of complete)result.missing.push({name:p.name,group:p.group,personId:p.personId,missing:['比较对象的统计截止不一致'],values:p.values});complete.length=0;}
