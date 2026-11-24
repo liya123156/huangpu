@@ -2,7 +2,7 @@
 'use strict';
 (() => {
   const H = HP, E = H.esc;
-  H.version = '3.9.0';
+  H.version = '3.9.1';
   const KEYS = ['house', 'owner', 'hmall', 'channel', 'entered', 'rate', 'view'];
   const LABELS = {
     house: '新增买卖房源', owner: '业主面见', hmall: 'hmall陪带次数',
@@ -454,6 +454,6 @@
   H.render = () => {
     previousRender();
     const badge = document.querySelector('.topbar .pill');
-    if (badge) badge.textContent = '组织管理版 V3.9.0';
+    if (badge) badge.textContent = '组织管理版 V3.9.1';
   };
 })();
