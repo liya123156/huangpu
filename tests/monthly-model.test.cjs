@@ -62,4 +62,23 @@ v=H.monthlyView();assert.equal(value(v,'owner'),4);assert.equal(node(v).cellMeta
 // Column order survives a backup and is immediately reflected in the shared
 // model used by the table and image exporter; unknown/duplicate keys are ignored.
 H.data.monthlyBoard={columnOrder:['view','view','bogus','house']};assert.deepEqual(Array.from(H.getMonthlyColumnOrder()),['view','house','owner','hmall','channel','entered','rate']);const restored=H.cleanBackup(H.clone(H.data));assert.deepEqual(Array.from(restored.monthlyBoard.columnOrder),Array.from(H.getMonthlyColumnOrder()));assert.equal(H.monthlyView().columns[0].key,'view');
+// Display and rankings use the same current-consultant roster. Hiding former,
+// unknown, or managerial people does not erase their original period totals.
+setup(8);for(let i=0;i<8;i++)for(const metric of ['view','channel'])H.data.facts.push(monthly(person(i),metric,i+1));
+const currentManager=person(90,{role:'店经理'}),unlisted=person(91),departed=person(92,{employmentStatus:'已离职'}),inactive=person(93,{employeeStatus:'terminated'}),disabled=person(94,{isActive:false}),exited=person(95,{exitDate:'2031-02-01'}),withoutData=person(96),formerManager=person(97,{role:'店经理',status:'离职'});
+H.data.novRoster.push(currentManager,departed,inactive,disabled,exited,withoutData,formerManager);
+for(const [p,a,b]of [[currentManager,5,2],[unlisted,7,3],[departed,11,4],[inactive,13,5],[disabled,17,6],[exited,19,7]])H.data.facts.push(monthly(p,'view',a),monthly(p,'channel',b));
+const originalFacts=JSON.stringify(H.data.facts);v=H.monthlyView();r=v.rankings['合成门店']['2031-02'];
+assert.equal(value(v,'view'),108);assert.equal(value(v,'channel'),63);assert.equal(v.nodes.filter(n=>n.level==='person').length,9);assert.equal(v.displayCounts['合成门店'].uniqueConsultants,9);
+assert.ok(v.nodes.filter(n=>n.level==='person').every(n=>n.role==='顾问'));assert.ok(v.nodes.every(n=>!['SYNTH-90','SYNTH-91','SYNTH-92','SYNTH-93','SYNTH-94','SYNTH-95','SYNTH-97'].includes(n.personId)));
+assert.equal(value(v,'view','person',n=>n.personId==='SYNTH-96'),null,'A current consultant without facts remains visible as missing');
+assert.deepEqual(Array.from(node(v,'group',n=>n.group==='合成门店A组').managerNames),['测试顾问90']);assert.ok(!v.nodes.some(n=>(n.managerNames||[]).includes('测试顾问97')));
+assert.equal(r.count,8);assert.deepEqual(Array.from(r.missing,p=>p.personId),['SYNTH-96']);assert.ok(r.all.every(p=>Number(p.personId.split('-')[1])<8));assert.equal(JSON.stringify(H.data.facts),originalFacts);
+H.data.novRoster[0].用工关系状态='离职';v=H.monthlyView();assert.equal(v.displayCounts['合成门店'].uniqueConsultants,8);assert.equal(value(v,'view'),108,'Changing display status preserves the source-based organization total');assert.equal(v.rankings['合成门店']['2031-02'].count,7);
+assert.equal(H.monthlyIsCurrentStaff(person(0,{status:'未离职'})),true,'A negated or planned departure is not an explicit departed status');assert.equal(H.monthlyIsCurrentStaff(person(0,{status:'计划离职'})),true);
+// A genuine group-level source remains authoritative. It is not added again as
+// a manager's displayed copy or to its individual source records.
+setup(2);H.data.novRoster[1].group='合成门店A组';H.data.novRoster.push(person(90,{role:'店经理'}));
+H.data.facts.push(monthly(person(0),'view',3),monthly(person(1,{group:'合成门店A组'}),'view',4),monthly(person(90,{role:'店经理'}),'view',5),monthly({level:'group',store:'合成门店',group:'合成门店A组',person:'',personId:''},'view',42));
+v=H.monthlyView();assert.equal(value(v,'view','group'),42);assert.equal(value(v,'view'),42);assert.equal(v.nodes.filter(n=>n.level==='person').length,2);assert.equal(H.data.facts.length,4);
 console.log('PASS monthly model: dynamic months, scoped source replacement, no legacy top-up, conflicts, exact hierarchy, weighted ratio, stable-ID ranking, roles, missing/zero, ties, weekly fallback, coverage notes and persistent column order.');

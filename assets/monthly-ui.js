@@ -2,7 +2,7 @@
 'use strict';
 (() => {
   const H = HP, E = H.esc;
-  H.version = '3.7';
+  H.version = '3.8';
   const KEYS = ['house', 'owner', 'hmall', 'channel', 'entered', 'rate', 'view'];
   const LABELS = {
     house: '新增买卖房源', owner: '业主面见', hmall: 'hmall陪带次数',
@@ -15,6 +15,7 @@
     rate: ['重点渠道', '进入带看率'], view: ['买卖', '带看次数']
   };
   const SHARES = {house: 10, owner: 9, hmall: 10, channel: 11, entered: 13, rate: 13, view: 10};
+  const scopeNote = '个人仅显示当前在职顾问；门店、店组保留当期历史合计。';
   const kind = {region: '大区', store: '门店', group: '店组', person: '个人'};
   const monthLabel = month => /^\d{4}-\d{2}$/.test(String(month)) ? Number(month.slice(5)) + '月' : String(month || '');
   const periodLabel = months => {
@@ -152,7 +153,7 @@
       title: store + '｜活动量月度对比',
       subtitle: periodLabel(months), store, months, columns: columns(),
       rows: storeRows(view, store),
-      notes: ['0为底表明确零值；—为未提供记录或比率无法计算。', ...sourceNotes(view)],
+      notes: [scopeNote, '0为底表明确零值；—为未提供记录或比率无法计算。', ...sourceNotes(view)],
       sourceCutoff: view.sourceCutoff || '',
       rankMonth, ranking: view.rankings?.[store]?.[rankMonth] || (H.monthlyRanking ? H.monthlyRanking({store, month: rankMonth}) : null)
     };
@@ -162,7 +163,10 @@
     const value = H.monthlyFormatCell(node, month, key);
     return '<td class="' + value.className + '"' + (value.title ? ' title="' + E(value.title) + '"' : '') + '>' + E(value.text) + (value.asterisk ? '<sup class="hp-monthly-source-mark" aria-label="统计范围待核对">＊</sup>' : '') + '</td>';
   };
-  const roleLabel = node => node.level === 'person' && node.role && node.role !== '待核对' ? node.role : kind[node.level] || '个人';
+  const managerNames = node => node.level === 'group' ? [...new Set((Array.isArray(node.managerNames) ? node.managerNames : node.managerName ? [node.managerName] : []).filter(name => typeof name === 'string' && name.trim()))] : [];
+  H.monthlyEntityLabel = node => (node.label || node.person || node.group || node.store || '黄浦大区合计') + (managerNames(node).length ? ' · ' + managerNames(node).join('、') : '');
+  const nameLabelHTML = node => E(node.label || node.person || node.group || node.store || '黄浦大区合计') + (managerNames(node).length ? '<span class="hp-monthly-manager"> · ' + managerNames(node).map(E).join('、') + '</span>' : '');
+  const kindHTML = node => node.level === 'person' ? '' : '<span class="hp-monthly-kind">' + E(kind[node.level] || '') + '</span>';
   const tableHTML = (rows, months, store) => {
     const ordered = columns();
     return '<div class="hp-monthly-table-wrap" data-monthly-table-store="' + E(store) + '"><table class="hp-monthly-table" aria-label="' + E((store || '黄浦大区') + '三个月活动量，全列显示') + '">' +
@@ -173,10 +177,10 @@
         '<span class="hp-monthly-column-moves"><button type="button" data-monthly-move="-1" data-column="' + column.key + '" aria-label="' + E(column.label + '向左移动') + '"' + (index === 0 ? ' disabled' : '') + '>‹</button><button type="button" data-monthly-move="1" data-column="' + column.key + '" aria-label="' + E(column.label + '向右移动') + '"' + (index === ordered.length - 1 ? ' disabled' : '') + '>›</button></span></th>'
       ).join('') + '</tr></thead>' + rows.map(node => '<tbody class="hp-monthly-entity hp-monthly-level-' + E(node.level) + '">' + months.map((month, index) =>
         '<tr class="' + (index === months.length - 1 ? 'hp-monthly-last' : '') + '">' +
-        (index === 0 ? '<th scope="rowgroup" rowspan="' + months.length + '" class="hp-monthly-name"><span class="hp-monthly-kind">' + E(roleLabel(node)) + '</span><span class="hp-monthly-name-label">' + E(node.label || node.person || node.group || node.store || '黄浦大区合计') + '</span></th>' : '') +
+        (index === 0 ? '<th scope="rowgroup" rowspan="' + months.length + '" class="hp-monthly-name">' + kindHTML(node) + '<span class="hp-monthly-name-label">' + nameLabelHTML(node) + '</span></th>' : '') +
         '<td class="hp-monthly-month">' + E(monthLabel(month)) + '</td>' + ordered.map(column => valueHTML(node, month, column.key)).join('') + '</tr>'
       ).join('') + '</tbody>').join('') + '</table></div>' +
-      '<div class="hp-monthly-mobile">' + rows.map(node => '<section class="hp-monthly-mobile-entity hp-monthly-level-' + E(node.level) + '"><h3><span>' + E(node.label || node.person || node.group || node.store || '黄浦大区合计') + '</span><small>' + E(roleLabel(node)) + '</small></h3>' + months.map(month =>
+      '<div class="hp-monthly-mobile">' + rows.map(node => '<section class="hp-monthly-mobile-entity hp-monthly-level-' + E(node.level) + '"><h3><span>' + nameLabelHTML(node) + '</span>' + (node.level === 'person' ? '' : '<small>' + E(kind[node.level] || '') + '</small>') + '</h3>' + months.map(month =>
         '<div class="hp-monthly-mobile-month"><h4>' + E(monthLabel(month)) + '</h4><div class="hp-monthly-mobile-values">' + ordered.map(column => {
           const value = H.monthlyFormatCell(node, month, column.key);
           return '<div><span>' + E(column.label) + '</span><b class="' + value.className + '"' + (value.title ? ' title="' + E(value.title) + '"' : '') + '>' + E(value.text) + (value.asterisk ? '<sup class="hp-monthly-source-mark">＊</sup>' : '') + '</b></div>';
@@ -204,7 +208,7 @@
       content = '<section class="hp-monthly-rank-panel"><p class="hp-monthly-rank-status">' + E(messages[ranking.status] || '按本月已提供数据展示。') + '</p>' + all.map(person => rankCard(person, ranking, 'all')).join('') + '</section>';
     }
     return '<section class="hp-monthly-store-review"><h3>' + E(store) + ' · ' + E(monthLabel(month)) + '</h3>' +
-      '<p class="hp-monthly-coverage">已核对顾问名单中，' + Number(ranking.count || 0) + '人两项数据齐全' + (missing.length ? '，' + missing.length + '人待补数据' : '') + '。店经理不参加顾问排名。</p>' + content +
+      '<p class="hp-monthly-coverage">当前在职顾问中，' + Number(ranking.count || 0) + '人两项数据齐全' + (missing.length ? '，' + missing.length + '人待补数据' : '') + '。</p>' + content +
       (missing.length ? '<p class="hp-monthly-rank-missing"><strong>数据待补：</strong>' + missing.map(person => E((person.name || person.person || '') + '（缺' + (person.missing || []).join('、') + '）')).join('；') + '。以上人员未计入后三名。</p>' : '') + '</section>';
   }).join('');
 
@@ -224,7 +228,7 @@
     const notes = sourceNotes(view);
     return '<div id="monthly-activity"><header class="hp-monthly-heading"><div><div class="eyebrow">黄浦大区 · 组织管理</div><h1>活动量月度对比</h1><p>' + E(period) + '</p></div>' +
       '<div class="hp-monthly-controls"><label for="monthly-store">门店<select id="monthly-store" data-monthly-filter="store"><option value="">黄浦大区 · 全部门店</option>' + stores.map(store => '<option value="' + E(store) + '"' + (selected === store ? ' selected' : '') + '>' + E(store) + '</option>').join('') + '</select></label>' + (selected ? exportButtons(selected, true) : '') + '</div></header>' +
-      '<div class="hp-monthly-table-help"><span>门店、店组、个人全部显示</span><span>拖动表头调整指标顺序<span class="hp-monthly-key-hint">，或选中表头后按 ← / →</span></span></div>' +
+      '<div class="hp-monthly-table-help"><span>门店、店组、在职顾问全部显示</span><span>拖动表头调整指标顺序<span class="hp-monthly-key-hint">，或选中表头后按 ← / →</span></span></div>' +
       (!selected && region.length ? '<section class="hp-monthly-section hp-monthly-region"><div class="hp-monthly-section-head"><h2>黄浦大区合计</h2></div>' + tableHTML(region, months, '') + '</section>' : '') +
       shownStores.map(store => '<section class="hp-monthly-section" data-monthly-store="' + E(store) + '"><div class="hp-monthly-section-head"><h2>' + E(store) + '</h2>' + (!selected ? exportButtons(store, false) : '') + '</div>' + tableHTML(storeRows(view, store), months, store) + '</section>').join('') +
       (!shownStores.length ? '<section class="hp-monthly-empty"><p>导入活动量底表后，在这里查看三个月的门店、店组和个人数据。</p><button class="btn primary" type="button" data-monthly-action="import">前往数据导入</button></section>' : '') +
@@ -232,7 +236,7 @@
       '<section class="hp-monthly-review" aria-label="门店顾问活动量前三与后三"><div class="hp-monthly-review-head"><h2>活动量标杆与重点提醒</h2><label for="monthly-rank-month">评选月份<select id="monthly-rank-month" data-monthly-filter="rankMonth">' + months.map(month => '<option value="' + E(month) + '"' + (month === ui.rankMonth ? ' selected' : '') + '>' + E(monthLabel(month)) + '</option>').join('') + '</select></label></div>' +
       '<p class="hp-monthly-rule">买卖带看、重点渠道新增分别在同店顾问中排名，各占50%。第3位同分者一并展示；缺数据不按0计算。</p>' +
       '<div id="monthly-ranking-output" aria-live="polite">' + rankingHTML(view, shownStores, ui.rankMonth) + '</div></section>' +
-      '<footer class="hp-monthly-notes"><p>主表按底表所属店组汇总；榜单按已核对顾问身份合并同人记录。数据依据说明活动表现，具体原因需结合沟通了解。</p>' + notes.map(note => '<p>' + E(note) + '</p>').join('') + '</footer>' +
+      '<footer class="hp-monthly-notes"><p>' + scopeNote + '</p><p>数据依据说明活动表现，具体原因需结合沟通了解。</p>' + notes.map(note => '<p>' + E(note) + '</p>').join('') + '</footer>' +
       '<span id="monthly-order-status" class="hp-monthly-sr-only" role="status" aria-live="polite"></span></div>';
   };
 
@@ -260,14 +264,83 @@
     return H.setMonthlyColumnOrder(order, key, store);
   };
 
-  let dragging = null;
+  let dragging = null, pointerDrag = null, suppressClickUntil = 0;
   const inPage = event => event.target?.closest?.('#monthly-activity');
   const clearDrag = () => {
     document.querySelectorAll('#monthly-activity .hp-monthly-dragging, #monthly-activity .hp-monthly-drop-target').forEach(element => element.classList.remove('hp-monthly-dragging', 'hp-monthly-drop-target'));
     dragging = null;
   };
+  const reorderTo = (key, targetKey, store) => {
+    const order = columns().map(column => column.key), from = order.indexOf(key), to = order.indexOf(targetKey);
+    if (from < 0 || to < 0 || from === to) return;
+    order.splice(from, 1); order.splice(to, 0, key);
+    return H.setMonthlyColumnOrder(order, key, store);
+  };
+  const stopPointerDrag = () => {
+    const current = pointerDrag;
+    pointerDrag = null;
+    if (!current) return null;
+    current.head.setAttribute?.('draggable', current.previousDraggable);
+    current.head.classList.remove('hp-monthly-dragging');
+    current.page.classList?.remove('hp-monthly-is-dragging');
+    try { current.head.releasePointerCapture?.(current.pointerId); } catch (_) { /* Pointer already released. */ }
+    clearDrag();
+    return current;
+  };
+  const pointerTarget = event => {
+    const element = document.elementFromPoint?.(event.clientX, event.clientY);
+    const head = element?.closest?.('[data-monthly-column]');
+    return head?.closest?.('#monthly-activity') ? head : null;
+  };
+  document.addEventListener('pointerdown', event => {
+    const page = inPage(event);
+    if (!page || pointerDrag || event.isPrimary === false || (event.button != null && event.button !== 0) || event.target.closest('button')) return;
+    const head = event.target.closest('[data-monthly-column]');
+    if (!head || !KEYS.includes(head.dataset.monthlyColumn)) return;
+    pointerDrag = {
+      pointerId: event.pointerId, head, page, key: head.dataset.monthlyColumn,
+      store: head.closest('[data-monthly-table-store]')?.dataset.monthlyTableStore || '',
+      startX: event.clientX, startY: event.clientY, active: false, targetKey: null,
+      previousDraggable: head.getAttribute?.('draggable') || 'true'
+    };
+    // Let ordinary clicks focus the header. Pointer movement owns the drag, so
+    // the browser's native drag cannot cancel pointer events halfway through it.
+    head.setAttribute?.('draggable', 'false');
+  });
+  document.addEventListener('pointermove', event => {
+    const current = pointerDrag;
+    if (!current || event.pointerId !== current.pointerId) return;
+    const dx = Math.abs(event.clientX - current.startX), dy = Math.abs(event.clientY - current.startY);
+    if (!current.active) {
+      if (dy > 10 && dy > dx) { stopPointerDrag(); return; }
+      if (dx < 6) return;
+      current.active = true;
+      current.head.classList.add('hp-monthly-dragging');
+      current.page.classList?.add('hp-monthly-is-dragging');
+      try { current.head.setPointerCapture?.(event.pointerId); } catch (_) { /* Document handlers still receive movement. */ }
+    }
+    event.preventDefault();
+    const head = pointerTarget(event);
+    current.targetKey = head?.dataset.monthlyColumn || null;
+    document.querySelectorAll('#monthly-activity .hp-monthly-drop-target').forEach(element => element.classList.remove('hp-monthly-drop-target'));
+    if (head && current.targetKey !== current.key) head.classList.add('hp-monthly-drop-target');
+  }, {passive: false});
+  document.addEventListener('pointerup', event => {
+    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+    const targetKey = pointerTarget(event)?.dataset.monthlyColumn || null;
+    const current = stopPointerDrag();
+    if (!current?.active) return;
+    event.preventDefault();
+    suppressClickUntil = Date.now() + 350;
+    reorderTo(current.key, targetKey, current.store);
+  });
+  document.addEventListener('pointercancel', event => {
+    if (pointerDrag && event.pointerId === pointerDrag.pointerId) stopPointerDrag();
+  });
+  globalThis.addEventListener?.('blur', stopPointerDrag);
   document.addEventListener('click', event => {
     if (!inPage(event)) return;
+    if (Date.now() < suppressClickUntil) { event.preventDefault(); event.stopPropagation?.(); return; }
     const move = event.target.closest('[data-monthly-move]');
     if (move) {
       H.moveMonthlyColumn(move.dataset.column, Number(move.dataset.monthlyMove), move.closest('[data-monthly-table-store]')?.dataset.monthlyTableStore || '');
@@ -305,6 +378,7 @@
   });
   document.addEventListener('dragstart', event => {
     if (!inPage(event)) return;
+    if (pointerDrag || event.target.closest('button')) { event.preventDefault(); return; }
     const head = event.target.closest('[data-monthly-column]');
     if (!head) return;
     dragging = {key: head.dataset.monthlyColumn, store: head.closest('[data-monthly-table-store]')?.dataset.monthlyTableStore || ''};
@@ -325,17 +399,15 @@
     const head = event.target.closest('[data-monthly-column]');
     if (!head) { clearDrag(); return; }
     event.preventDefault();
-    const order = columns().map(column => column.key), from = order.indexOf(dragging.key), to = order.indexOf(head.dataset.monthlyColumn), key = dragging.key, store = dragging.store;
+    const key = dragging.key, store = dragging.store, targetKey = head.dataset.monthlyColumn;
     clearDrag();
-    if (from < 0 || to < 0 || from === to) return;
-    order.splice(from, 1); order.splice(to, 0, key);
-    H.setMonthlyColumnOrder(order, key, store);
+    reorderTo(key, targetKey, store);
   });
-  document.addEventListener('dragend', clearDrag);
+  document.addEventListener('dragend', () => { if (!pointerDrag) clearDrag(); });
   const previousRender = H.render;
   H.render = () => {
     previousRender();
     const badge = document.querySelector('.topbar .pill');
-    if (badge) badge.textContent = '组织管理版 V3.7';
+    if (badge) badge.textContent = '组织管理版 V3.8';
   };
 })();

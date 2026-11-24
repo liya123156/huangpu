@@ -14,7 +14,7 @@ H.monthlyImageLayout=model=>{
  const width=1440,pad=36,objectWidth=210,monthWidth=84,remaining=width-pad*2-objectWidth-monthWidth;
  const weights={house:1,owner:.82,hmall:1,channel:1,entered:1.25,rate:1.2,view:1};
  const total=columns.reduce((s,c)=>s+(weights[c.key||c.id]||1),0);
- return {width,pad,columns,widths:[objectWidth,monthWidth,...columns.map(c=>remaining*(weights[c.key||c.id]||1)/total)],rowHeight:44,headerHeight:110,titleHeight:130};
+ return {width,pad,columns,widths:[objectWidth,monthWidth,...columns.map(c=>remaining*(weights[c.key||c.id]||1)/total)],rowHeight:32,headerHeight:86,titleHeight:116};
 };
 H.renderMonthlyStorePNG=async model=>{
  if(document.fonts?.ready)await document.fonts.ready;
@@ -35,9 +35,9 @@ H.renderMonthlyStorePNG=async model=>{
     const title=wrap(measure,(item.name||item.person||'')+' · '+String(item.group||'').replace(model.store,''),cardWidth-38);
     measure.font='16px '+face;
     const reason=wrap(measure,rankReason(item,ranking,group.side),cardWidth-38);
-    return {title,reason,values:item.values||{},height:44+title.length*28+reason.length*24};
+    return {title,reason,values:item.values||{},height:34+title.length*26+reason.length*22};
    });
-   rankCards.push({...group,entries,width:cardWidth,height:60+Math.max(70,entries.reduce((s,x)=>s+x.height,0))+18});
+   rankCards.push({...group,entries,width:cardWidth,height:54+Math.max(60,entries.reduce((s,x)=>s+x.height,0))+14});
   }
  }
  measure.font='16px '+face;
@@ -60,9 +60,9 @@ H.renderMonthlyStorePNG=async model=>{
  const text=(s,x,y,size=20,color='#252139',bold=false)=>{ctx.font=(bold?'700 ':'400 ')+size+'px '+face;ctx.fillStyle=color;ctx.fillText(String(s??''),x,y);};
  const box=(x,y,w,h,fill)=>{ctx.fillStyle=fill;ctx.fillRect(x,y,w,h);ctx.strokeStyle='#ddd6ed';ctx.lineWidth=.8;ctx.strokeRect(x,y,w,h);};
  const center=(s,x,y,w,h,size=20,color='#252139',bold=false)=>{ctx.font=(bold?'700 ':'400 ')+size+'px '+face;const lines=wrap(ctx,s,w-20),lineHeight=size+7,top=y+(h-lines.length*lineHeight)/2+2;for(let i=0;i<lines.length;i++)text(lines[i],x+(w-ctx.measureText(lines[i]).width)/2,top+i*lineHeight,size,color,bold);};
- ctx.fillStyle='#210d54';ctx.fillRect(pad,22,width-pad*2,90);
- text(model.title||model.store+' · 月度活动量',pad+22,39,29,'#ffffff',true);
- text(model.subtitle||months.map(monthLabel).join(' / ')+' · 门店、店组、个人',pad+22,78,17,'#e2d8f3');
+ ctx.fillStyle='#210d54';ctx.fillRect(pad,18,width-pad*2,82);
+ text(model.title||model.store+' · 月度活动量',pad+22,31,29,'#ffffff',true);
+ text(model.subtitle||months.map(monthLabel).join(' / ')+' · 门店、店组、个人',pad+22,70,17,'#e2d8f3');
  let x=pad,y=titleHeight;
  const headers=['组织 / 姓名','月份',...columns.map(c=>c.label)];
  widths.forEach((w,i)=>{box(x,y,w,headerHeight,'#eee9f8');center(headers[i],x,y,w,headerHeight,20,'#3a2856',true);x+=w;});
@@ -71,11 +71,14 @@ H.renderMonthlyStorePNG=async model=>{
   const orgFill=node.level==='store'?'#eee6fa':node.level==='group'?'#f5f0fb':'#ffffff';
   box(pad,y,widths[0],rowHeight*months.length,orgFill);
   const indent=node.level==='person'?26:node.level==='group'?18:12;
-  const levelLabel=node.level==='person'&&node.role&&node.role!=='待核对'?node.role:({region:'大区',store:'门店',group:'店组',person:'个人'}[node.level]||'');
-  text(levelLabel,pad+indent,y+20,14,'#79678e');
+  const levelLabel=({region:'大区',store:'门店',group:'店组'}[node.level]||'');
+  if(levelLabel)text(levelLabel,pad+indent,y+10,14,'#79678e');
   ctx.font=(node.level==='person'?'400 ':'700 ')+'22px '+face;
   const nameLines=wrap(ctx,node.label||node.person||node.group||node.store,widths[0]-indent-16);
-  nameLines.forEach((line,i)=>text(line,pad+indent,y+47+i*29,22,'#3b275c',node.level!=='person'));
+  const nameTop=node.level==='person'?(rowHeight*months.length-nameLines.length*28)/2:30;
+  nameLines.forEach((line,i)=>text(line,pad+indent,y+nameTop+i*28,22,'#3b275c',node.level!=='person'));
+  const managerNames=node.level==='group'?(node.managerNames||[]).join('、'):'';
+  if(managerNames){ctx.font='14px '+face;wrap(ctx,'经理：'+managerNames,widths[0]-indent-16).slice(0,2).forEach((line,i)=>text(line,pad+indent,y+nameTop+nameLines.length*28+4+i*18,14,'#79678e'));}
   for(const month of months){
    x=pad+widths[0];const fill=month===months.at(-1)?'#f8f5fc':'#ffffff';
    box(x,y,widths[1],rowHeight,fill);center(monthLabel(month),x,y,widths[1],rowHeight,18,'#655a75');x+=widths[1];
@@ -98,13 +101,13 @@ H.renderMonthlyStorePNG=async model=>{
    const cx=pad+(rankCards.length===2?index*(halfWidth+24):0);
    box(cx,y,card.width,cardHeight,card.side==='bottom'?'#fff9f5':'#faf7fe');
    text(card.title,cx+18,y+18,22,card.side==='bottom'?'#825537':'#4c316b',true);
-   let cy=y+56;
+   let cy=y+50;
    if(!card.entries.length)text('暂无可比较对象',cx+18,cy+10,17,'#81738d');
    for(const entry of card.entries){
-    entry.title.forEach((line,i)=>text(line,cx+18,cy+i*28,20,'#352447',true));cy+=entry.title.length*28;
+    entry.title.forEach((line,i)=>text(line,cx+18,cy+i*26,20,'#352447',true));cy+=entry.title.length*26;
     let tx=cx+18;
     for(const part of [{s:'买卖带看 '},{s:H.fmt(entry.values.view),zero:entry.values.view===0,bold:true},{s:' 次；重点渠道新增 '},{s:H.fmt(entry.values.channel),zero:entry.values.channel===0,bold:true}]){text(part.s,tx,cy,16,part.zero?'#c83245':'#6f627d',part.bold);tx+=ctx.measureText(part.s).width;}
-    cy+=26;entry.reason.forEach((line,i)=>text(line,cx+18,cy+i*24,16,'#6f627d'));cy+=entry.reason.length*24+18;
+    cy+=24;entry.reason.forEach((line,i)=>text(line,cx+18,cy+i*22,16,'#6f627d'));cy+=entry.reason.length*22+10;
    }
   });
   y+=cardHeight+22;for(const line of rankNoteLines){text(line,pad,y,16,'#776783');y+=24;}
@@ -115,7 +118,7 @@ H.renderMonthlyStorePNG=async model=>{
 H.previewMonthlyStore=(blob,filename)=>{
  if(H.monthlyPreviewURL)URL.revokeObjectURL(H.monthlyPreviewURL);
  H.monthlyExportBlob=blob;H.monthlyExportFilename=filename;H.monthlyPreviewURL=URL.createObjectURL(blob);
- H.modal('门店看板图片','<p class="subtle">已包含本店全部店组和个人。可右键复制图片，或保存后发送。</p><img style="display:block;width:100%;height:auto;border:1px solid #ddd3ea" src="'+H.monthlyPreviewURL+'" alt="完整门店月度活动量看板图片">','<button class="btn" onclick="HP.close()">关闭</button><button class="btn primary" onclick="HP.download(HP.monthlyExportFilename,HP.monthlyExportBlob)">保存图片</button>');
+ H.modal('门店看板图片','<p class="subtle">已包含本店全部店组和当前在职顾问。可右键复制图片，或保存后发送。</p><img style="display:block;width:100%;height:auto;border:1px solid #ddd3ea" src="'+H.monthlyPreviewURL+'" alt="完整门店月度活动量看板图片">','<button class="btn" onclick="HP.close()">关闭</button><button class="btn primary" onclick="HP.download(HP.monthlyExportFilename,HP.monthlyExportBlob)">保存图片</button>');
 };
 const exportStore=async(store,copy)=>{
  try{
