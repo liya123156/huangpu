@@ -27,11 +27,13 @@ function setup(options = {}) {
   }
   for (const id of ['main', 'nav', 'sidebar', 'breadcrumb']) element(id);
   const document = {hidden: false, body: element(), getElementById: id => elements.get(id) || null, createElement: () => element()};
-  const location = new URL('https://local.invalid/app/' + (options.hash || '#activity'));
+  let reloadCount = 0;
+  const location = new URL(options.url || 'https://local.invalid/app/' + (options.hash || '#activity'));
+  location.reload = () => { reloadCount++; };
   const history = {state: options.historyState || null, replaceState(state, _, url) { this.state = state; location.href = new URL(url, location.href).href; }};
   const localStorage = options.localStorage || storage();
   const sessionStorage = options.sessionStorage || storage();
-  const calls = [], timers = new Map(), events = {}, copied = [];
+  const calls = [], timers = new Map(), events = {}, copied = [], modals = [], toasts = [];
   let timer = 0, initCount = 0, saveCount = 0, remoteView = null, clearCount = 0;
   const H = {data: data(), ui: {page: 'activity', monthlyBoard: {}}, nav: [['activity', '活动量'], ['import', '导入']],
     empty: () => ({facts: [], novRoster: [], followItems: [], monthlyBoard: {columnOrder: COLS.slice()}, updatedAt: ''}),
@@ -42,7 +44,7 @@ function setup(options = {}) {
     go(page) { this.ui.page = page; this.render(); },
     buildSharedActivity(snapshot) { return dtoFor(snapshot.facts[0]?.value || 0); },
     useSharedActivity(dto) { assert.equal(dto.format, 'huangpu-activity-share-v1'); remoteView = clone(dto.view); return remoteView; },
-    clearSharedActivity() { remoteView = null; clearCount++; }, modal() {}, close() {}, toast() {}};
+    clearSharedActivity() { remoteView = null; clearCount++; }, modal(...args) { modals.push(args); }, close() {}, toast(text) { toasts.push(text); }};
   const context = {HP: H, HP_SHARED_CONFIG: {endpoint: ENDPOINT, workspace: 'synthetic'}, document, location, history,
     localStorage, sessionStorage, navigator: {clipboard: {async writeText(value) { copied.push(value); }}},
     URL, URLSearchParams, TextEncoder, TextDecoder, CompressionStream, DecompressionStream, Blob, Response,
@@ -51,8 +53,8 @@ function setup(options = {}) {
     setInterval(fn, delay) { return {fn, delay, unref() {}}; }, addEventListener(name, handler) { events[name] = handler; },
     async fetch(url, request) { calls.push({url: String(url), ...request}); return options.fetch ? options.fetch(String(url), request, calls) : response({}, 503); }};
   context.window = context; vm.createContext(context); vm.runInContext(source, context, {filename: 'shared-sync.js'});
-  return {H, context, elements, calls, timers, events, localStorage, sessionStorage, location, history, copied,
-    counts: () => ({init: initCount, save: saveCount, cleared: clearCount}), remote: () => remoteView};
+  return {H, context, elements, calls, timers, events, localStorage, sessionStorage, location, history, copied, modals, toasts,
+    counts: () => ({init: initCount, save: saveCount, cleared: clearCount, reload: reloadCount}), remote: () => remoteView};
 }
 async function metadata(H, value) {
   return {format: 'huangpu-publish-state-v1', contentHash: await H.sharedCodec.sha256(new TextEncoder().encode(JSON.stringify(dtoFor(value).view))), sourceUpdatedAt: '2031-02-24T00:00:00Z'};
@@ -71,7 +73,7 @@ test('explicit reader link overrides saved owner; viewer never opens owner DB or
   reply = await viewerReply(env.H, 7); await env.H.init();
   assert.equal(env.H.sharedSyncStatus().role, 'viewer'); assert.equal(env.counts().init, 0);
   assert.equal(env.H.data.facts.length, 0); assert.equal(env.H.data.novRoster.length, 0);
-  assert.equal(env.location.hash, '#activity'); assert.equal(env.history.state.hpShared.role, 'viewer');
+  assert.equal(env.location.hash, '#activity'); assert.equal(env.location.searchParams.get('share'), READER); assert.equal(env.history.state.hpShared.role, 'viewer');
   env.H.data.monthlyBoard.columnOrder.reverse(); assert.equal(await env.H.save(), true);
   assert.equal(env.counts().save, 0); assert.equal(env.calls.some(call => call.method === 'PUT'), false);
   assert.ok(!env.sessionStorage.getItem(PREFIX + ':preferences').includes(PRIVATE));
@@ -178,7 +180,7 @@ test('authless local URL keeps existing data and never attempts a cloud request'
   assert.equal(env.counts().init, 1); assert.equal(env.H.sharedSyncStatus().role, 'local'); assert.equal(env.calls.length, 0);
   assert.equal(env.H.data.facts[0].value, 1); assert.match(env.elements.get('main').innerHTML, /LOCAL_OR_SHARED_CONTENT/);
   const empty = setup({data: {facts: [], novRoster: [], monthlyBoard: {columnOrder: COLS}}}); await empty.H.init();
-  assert.match(empty.elements.get('main').innerHTML, /打开分享链接后查看数据/); assert.equal(empty.calls.length, 0);
+  assert.match(empty.elements.get('main').innerHTML, /粘贴分享链接/); assert.match(empty.elements.get('main').innerHTML, /无需重新导入底表/); assert.equal(empty.calls.length, 0);
 });
 
 test('empty owner can read shared activity, but importing partial local data pauses automatic publication', async () => {
@@ -269,4 +271,94 @@ test('concurrent local saves use the newest outcome, while any still-pending sav
   settle[3](false); await nextNewer; settle[2](true); await nextOlder;
   assert.equal(await env.H.flushSharedChanges(), false); assert.match(env.H.sharedSyncStatus().message, /本机保存失败/);
   assert.equal(env.calls.filter(call => call.method === 'PUT').length, 1);
+});
+
+test('legacy viewer address stays shareable when copied into a fresh browser with no local data or credentials', async () => {
+  const first = setup({hash: '#activity?share=' + READER,
+    fetch: async () => response(await viewerReply(first.H, 17, 4))});
+  await first.H.init();
+  const copiedAddress = first.location.href;
+  assert.equal(new URL(copiedAddress).searchParams.get('share'), READER);
+  assert.equal(new URL(copiedAddress).hash, '#activity');
+  const otherBrowser = setup({url: copiedAddress, fetch: async (_, req) => {
+    assert.equal(req.headers['x-hp-token'], READER);
+    return response(await viewerReply(otherBrowser.H, 17, 4));
+  }});
+  await otherBrowser.H.init();
+  assert.equal(otherBrowser.H.sharedSyncStatus().role, 'viewer');
+  assert.equal(otherBrowser.counts().init, 0); assert.equal(otherBrowser.remote().value, 17);
+  assert.equal(otherBrowser.H.data.facts.length, 0);
+  assert.match(otherBrowser.elements.get('shared-sync-panel').innerHTML, /复制分享链接/);
+});
+
+test('query sharing works after a messenger removes the fragment, and still overrides a saved editor', async () => {
+  const env = setup({url: 'https://local.invalid/app/?share=' + READER,
+    localStorage: storage({[PREFIX + ':owner']: JSON.stringify({editor: EDITOR, reader: READER})}),
+    fetch: async () => response(await viewerReply(env.H, 23))});
+  await env.H.init(); assert.equal(env.H.sharedSyncStatus().role, 'viewer');
+  assert.equal(env.counts().init, 0); assert.equal(env.remote().value, 23);
+  assert.equal(env.location.searchParams.get('share'), READER);
+  assert.equal(env.location.hash, '#activity');
+});
+
+test('viewer copies a visible read-only query link, including when browser clipboard permission is denied', async () => {
+  const env = setup({url: 'https://local.invalid/app/?other_private_value=do-not-forward#activity?share=' + READER,
+    fetch: async () => response(await viewerReply(env.H, 19))});
+  await env.H.init(); assert.equal(await env.H.copySharedLink(), true);
+  const link = env.copied[0], url = new URL(link);
+  assert.deepEqual([...url.searchParams.keys()], ['share']);
+  assert.equal(url.searchParams.get('share'), READER); assert.equal(url.hash, '#activity');
+  assert.ok(!link.includes(EDITOR)); assert.ok(!link.includes('do-not-forward'));
+  assert.match(env.modals.at(-1)[1], /readonly/); assert.match(env.modals.at(-1)[1], /打开只读分享页面/);
+  assert.ok(env.modals.at(-1)[1].includes(link));
+  env.context.navigator.clipboard.writeText = async () => { throw Error('denied'); };
+  assert.equal(await env.H.copySharedLink(), true);
+  assert.ok(env.modals.at(-1)[1].includes(link)); assert.match(env.modals.at(-1)[1], /请复制下方完整链接/);
+  assert.equal(env.calls.some(call => call.method === 'PUT'), false);
+});
+
+test('query editor entry scrubs the edit credential and copied link contains only reader access', async () => {
+  const env = setup({url: 'https://local.invalid/app/?edit=' + EDITOR + '&share=' + READER + '&opaque=not-for-sharing#activity',
+    fetch: async () => response(await editorReply(env.H, 1))});
+  await env.H.init();
+  assert.equal(env.H.sharedSyncStatus().role, 'editor'); assert.equal(env.location.searchParams.has('edit'), false);
+  assert.equal(env.location.href.includes(EDITOR), false); assert.equal(await env.H.copySharedLink(), true);
+  const copied = new URL(env.copied[0]); assert.deepEqual([...copied.searchParams.keys()], ['share']);
+  assert.equal(copied.searchParams.get('share'), READER); assert.ok(!env.modals.at(-1)[1].includes(EDITOR));
+});
+
+test('local and viewer same-document legacy entry reloads once, while normal navigation does not', async () => {
+  const env = setup(); await env.H.init();
+  env.location.hash = '#import'; env.events.hashchange(); assert.equal(env.counts().reload, 0);
+  env.location.hash = '#activity?share=' + READER; env.events.hashchange(); env.events.hashchange();
+  assert.equal(env.counts().reload, 1);
+  const viewer = setup({url: 'https://local.invalid/app/?share=' + READER + '#activity',
+    fetch: async () => response(await viewerReply(viewer.H, 4))});
+  await viewer.H.init(); viewer.location.hash = '#activity'; viewer.events.hashchange();
+  assert.equal(viewer.counts().reload, 0);
+  viewer.location.hash = '#activity?edit=' + EDITOR + '&share=' + READER; viewer.events.hashchange();
+  assert.equal(viewer.counts().reload, 1);
+});
+
+test('missing-link recovery accepts a same-site share URL or reader code and never navigates to a foreign site', async () => {
+  const env = setup({data: {facts: [], novRoster: [], monthlyBoard: {columnOrder: COLS}}}); await env.H.init();
+  env.H.openSharedLink(); assert.match(env.modals.at(-1)[1], /分享链接或访问码/);
+  env.elements.set('shared-link-error', {textContent: ''});
+  assert.equal(env.H.connectSharedLink('https://untrusted.invalid/?share=' + READER), false);
+  assert.equal(env.counts().reload, 0); assert.match(env.elements.get('shared-link-error').textContent, /完整链接/);
+  assert.equal(env.H.connectSharedLink('https://local.invalid/app/#activity?edit=' + EDITOR + '&share=' + READER), true);
+  assert.equal(env.counts().reload, 1); assert.equal(env.location.href.includes(EDITOR), false);
+  assert.equal(env.location.searchParams.get('share'), READER);
+  assert.equal(env.H.connectSharedLink(READER), true); assert.equal(env.counts().reload, 2);
+  assert.equal(env.H.connectSharedLink('https://local.invalid/app/#activity?edit=' + EDITOR), false);
+  assert.equal(env.counts().reload, 2);
+});
+
+test('invalid or duplicated reader entry fails closed instead of loading local HR records', async () => {
+  for (const suffix of ['?share=not-a-valid-code', '?share=' + READER + '&share=' + 'X'.repeat(43)]) {
+    const env = setup({url: 'https://local.invalid/app/' + suffix}); await env.H.init();
+    assert.equal(env.counts().init, 0); assert.equal(env.calls.length, 0);
+    assert.equal(env.H.sharedSyncStatus().role, 'viewer'); assert.equal(env.H.sharedSyncStatus().hasView, false);
+    assert.match(env.elements.get('main').innerHTML, /粘贴分享链接/);
+  }
 });

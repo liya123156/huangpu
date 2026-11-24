@@ -19,8 +19,20 @@
     error: '', message: '', timer: null, poll: null, pendingHash: '', metadata: null, hasColumnPrefs: false,
     localSavePending: 0, localSaveFailed: false, localSaveSequence: 0, localSaveSettled: 0};
   let editorToken = '', readerToken = '';
-  const hashText = String(globalThis.location?.hash || '');
-  const parameters = new URLSearchParams(hashText.includes('?') ? hashText.slice(hashText.indexOf('?') + 1) : '');
+  const readAccessParameters = url => {
+    const query = new URLSearchParams(url.search || '');
+    const hash = String(url.hash || '');
+    const fragment = new URLSearchParams(hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '');
+    const parameters = new URLSearchParams();
+    // An explicit legacy fragment is a newly opened entry, and takes precedence
+    // over a previous read-only query on the same document.
+    for (const key of ['edit', 'share']) {
+      const source = fragment.has(key) ? fragment : query;
+      if (source.has(key)) parameters.set(key, source.getAll(key).length === 1 ? source.get(key) : '');
+    }
+    return parameters;
+  };
+  const parameters = readAccessParameters(globalThis.location || {});
   const explicitEditor = parameters.has('edit'), explicitViewer = parameters.has('share');
   const savedOwner = storageRead(local, prefix + ':owner');
   const savedViewer = storageRead(session, prefix + ':viewer');
@@ -42,11 +54,31 @@
   } else if (TOKEN.test(savedOwner?.editor || '')) {
     S.role = 'editor'; editorToken = savedOwner.editor; readerToken = TOKEN.test(savedOwner.reader || '') ? savedOwner.reader : '';
   }
+  const sharedURL = token => {
+    const url = new URL(location.href);
+    // Share only the reader capability. Never copy unknown query parameters or
+    // an editor entry; the fragment can be removed by chat apps without harm.
+    url.search = ''; url.searchParams.set('share', token); url.hash = 'activity';
+    return url;
+  };
   const markContext = () => {
     if (S.role === 'local') return;
-    try { history.replaceState({...history.state, hpShared: {role: S.role, scope: prefix}}, '', location.pathname + location.search + '#activity'); } catch (_) {}
+    try {
+      const url = S.role === 'viewer' ? sharedURL(readerToken) : new URL(location.href);
+      if (S.role === 'editor') { url.searchParams.delete('edit'); url.searchParams.delete('share'); url.hash = 'activity'; }
+      history.replaceState({...history.state, hpShared: {role: S.role, scope: prefix}}, '', url.pathname + url.search + url.hash);
+    } catch (_) {}
   };
   if (explicitEditor || explicitViewer) markContext();
+  let entryReloading = false;
+  globalThis.addEventListener?.('hashchange', () => {
+    const hash = String(location.hash || ''), fragment = new URLSearchParams(hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '');
+    if (fragment.has('edit') || fragment.has('share')) {
+      // A same-document link does not rerun scripts. Reload once so a local
+      // workspace or an existing viewer actually consumes the new entry.
+      if (!entryReloading) { entryReloading = true; location.reload?.(); }
+    } else if (S.role === 'viewer') markContext();
+  });
   const hasLocalData = () => Array.isArray(H.data?.facts) && H.data.facts.length > 0;
   const message = (text, phase = S.phase) => { S.message = text; S.phase = phase; mountStatus(); };
   const fail = (text, status = 0) => Object.assign(new Error(text), {status});
@@ -242,12 +274,36 @@
     message('当前显示本机数据；使用管理链接连接共享后，可生成分享链接。', 'local'); return false;
   };
   H.copySharedLink = async () => {
-    if (S.role !== 'editor' || !TOKEN.test(readerToken)) { H.toast('此管理链接尚未包含分享权限，请使用完整管理链接'); return false; }
-    if (S.dirty && !await H.flushSharedChanges() || S.conflict || !S.ready) { H.toast('看板尚未同步，请先核对共享状态'); return false; }
-    const url = new URL(location.href); url.hash = 'activity?share=' + readerToken;
-    try { await navigator.clipboard.writeText(url.href); H.toast('分享链接已复制，打开即可查看同一份看板'); }
-    catch (_) { H.modal('分享活动量看板', '<p>复制下方链接即可分享查看。</p><textarea readonly aria-label="分享链接">' + E(url.href) + '</textarea>'); }
+    if (!['editor', 'viewer'].includes(S.role) || !TOKEN.test(readerToken)) { H.toast('请先打开完整分享链接或管理入口'); return false; }
+    if (S.role === 'editor' && (S.dirty && !await H.flushSharedChanges() || S.conflict || !S.ready)) { H.toast('看板尚未同步，请先核对共享状态'); return false; }
+    if (S.role === 'viewer' && !S.hasView) { H.toast('请先成功读取共享看板，再复制分享链接'); return false; }
+    const url = sharedURL(readerToken); let copied = false;
+    try { await navigator.clipboard.writeText(url.href); copied = true; } catch (_) {}
+    H.modal('分享活动量看板', '<p>' + (copied ? '分享链接已复制，也可以复制下方完整链接。' : '请复制下方完整链接。') + '别人打开即可查看同一份看板。</p><textarea readonly rows="3" aria-label="分享链接">' + E(url.href) + '</textarea><p><a href="' + E(url.href) + '" target="_blank" rel="noopener noreferrer">打开只读分享页面</a></p>');
     return true;
+  };
+  H.openSharedLink = () => H.modal('连接共享看板', '<p>粘贴维护人发来的完整分享链接，或只读访问码。无需重新导入底表。</p><textarea id="shared-link-input" rows="3" aria-label="分享链接或访问码" placeholder="粘贴完整分享链接或访问码"></textarea><p id="shared-link-error" role="alert"></p>', '<button class="btn" onclick="HP.close()">取消</button><button class="btn primary" onclick="HP.connectSharedLink()">打开共享看板</button>');
+  H.connectSharedLink = value => {
+    const input = String(value === undefined ? document.getElementById('shared-link-input')?.value || '' : value).trim();
+    let token = input;
+    try {
+      if (!TOKEN.test(input)) {
+        const url = new URL(input), current = new URL(location.href);
+        const path = pathname => pathname.replace(/\/index\.html$/, '/');
+        if (url.origin !== current.origin || path(url.pathname) !== path(current.pathname)) throw Error();
+        token = readAccessParameters(url).get('share') || '';
+      }
+      if (!TOKEN.test(token)) throw Error();
+      const url = sharedURL(token);
+      // Explicit viewer entry must override any saved owner, including when
+      // reopening the same URL; reload avoids a same-document hash no-op.
+      history.replaceState(null, '', url.pathname + url.search + url.hash);
+      location.reload?.(); return true;
+    } catch (_) {
+      const error = document.getElementById('shared-link-error');
+      if (error) error.textContent = '未识别到有效的黄浦看板分享链接。请复制完整链接，或粘贴只读访问码。';
+      H.toast('分享链接不完整，请重新复制维护人提供的链接'); return false;
+    }
   };
   H.save = async () => {
     if (S.role === 'viewer') { S.hasColumnPrefs = true; return saveViewerPreferences(); }
@@ -299,20 +355,21 @@
     panel.innerHTML = '<b>' + title + '</b><p role="status" aria-live="polite" class="shared-sync-status ' + (S.phase === 'error' || S.conflict ? 'is-warning' : '') + '">' + E(text) + '</p>' +
       (updated ? '<small>共享更新：' + E(updated) + '（上海时间）</small>' : '') +
       (S.role === 'editor' ? '<small>仅同步活动量看板，底表和HR记录保存在本机。</small>' : '') +
-      '<div class="shared-sync-actions">' + (S.role === 'editor' && TOKEN.test(readerToken) ? '<button type="button" onclick="HP.copySharedLink()">复制分享链接</button>' : '') +
+      '<div class="shared-sync-actions">' + (S.role !== 'local' && TOKEN.test(readerToken) ? '<button type="button" onclick="HP.copySharedLink()">复制分享链接</button>' : '') +
+      (S.role === 'local' ? '<button type="button" onclick="HP.openSharedLink()">粘贴分享链接</button>' : '') +
       (S.role !== 'local' ? '<button type="button" onclick="HP.refreshSharedData()">刷新数据</button>' : '') +
       (S.role === 'editor' && S.conflict && S.revision && hasLocalData() ? '<button type="button" onclick="HP.sharedReviewPublish()">核对并发布</button>' : '') + '</div>';
   }
   H.render = () => {
     if (S.role === 'viewer') { H.ui.page = 'activity'; H.nav = [['activity', '活动量看板']]; }
     if ((S.role === 'viewer' || S.role === 'editor' && !hasLocalData() && H.ui.page === 'activity') && !S.hasView) {
-      const main = document.getElementById('main'); if (main) main.innerHTML = '<section class="panel shared-sync-empty"><h1>共享活动量看板</h1><p>' + E(S.message || S.error || '正在读取共享数据…') + '</p>' + (S.phase === 'error' ? '<button class="btn" onclick="HP.refreshSharedData()">重新读取</button>' : '') + '</section>';
+      const main = document.getElementById('main'); if (main) main.innerHTML = '<section class="panel shared-sync-empty"><h1>共享活动量看板</h1><p>' + E(S.message || S.error || '正在读取共享数据…') + '</p>' + (S.phase === 'error' ? '<button class="btn" onclick="HP.refreshSharedData()">重新读取</button> <button class="btn" onclick="HP.openSharedLink()">粘贴分享链接</button>' : '') + '</section>';
       const nav = document.getElementById('nav'); if (nav) nav.innerHTML = S.role === 'viewer' ? '<button class="active" onclick="HP.go(\'activity\')">活动量看板</button>' : H.nav.map(([page, label]) => '<button onclick="HP.go(\'' + E(page) + '\')">' + E(label) + '</button>').join('');
       const crumb = document.getElementById('breadcrumb'); if (crumb) crumb.textContent = '黄浦大区 / 共享活动量看板';
     } else {
       originalRender.call(H);
       if (S.role === 'local' && H.ui.page === 'activity' && !hasLocalData()) {
-        const main = document.getElementById('main'); if (main) main.innerHTML = '<section class="panel shared-sync-empty"><h1>打开分享链接后查看数据</h1><p>此网址尚未连接共享看板。请使用维护人提供的分享链接，或导入底表在本机使用。</p><button class="btn" onclick="HP.go(\'import\')">数据导入</button></section>';
+        const main = document.getElementById('main'); if (main) main.innerHTML = '<section class="panel shared-sync-empty"><h1>连接共享看板后查看数据</h1><p>当前地址缺少分享信息。粘贴维护人提供的完整分享链接即可查看，无需重新导入底表。</p><button class="btn primary" onclick="HP.openSharedLink()">粘贴分享链接</button></section>';
       }
     }
     mountStatus();
@@ -326,7 +383,6 @@
       else if (!S.dirty && !S.conflict) reconcileOwner(); };
     S.poll = setInterval(tick, 45000); S.poll?.unref?.();
     globalThis.addEventListener?.('focus', tick);
-    globalThis.addEventListener?.('hashchange', () => { if (S.role === 'viewer') markContext(); });
   }
   H.init = async () => {
     if (S.role === 'viewer') {
