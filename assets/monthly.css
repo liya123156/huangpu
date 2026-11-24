@@ -19,6 +19,8 @@
 #monthly-activity .hp-monthly-controls, #monthly-activity .hp-monthly-image-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 #monthly-activity label { display: flex; align-items: center; gap: 9px; font-size: 15px; color: #5d506c; }
 #monthly-activity select { font-size: 16px; max-width: 100%; padding: 9px 12px; }
+#monthly-activity .hp-monthly-controls label { white-space: nowrap; }
+#monthly-activity #monthly-month { min-width: 125px; }
 #monthly-activity .btn { font-size: 15px; padding: 10px 14px; }
 #monthly-activity .hp-monthly-table-help { display: flex; justify-content: space-between; gap: 6px 18px; flex-wrap: wrap; margin: 0 0 9px; color: var(--monthly-muted); font-size: 14px; }
 #monthly-activity .hp-monthly-section { margin: 0 0 18px; min-width: 0; }

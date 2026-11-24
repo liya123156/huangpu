@@ -61,8 +61,8 @@ test('the monthly page renders all hierarchy rows and three months without old e
   assert(!H.html.includes('缺数据不按0'));
   assert(!H.html.includes('0</b> 为底表明确零值'));
   assert(H.html.includes('未记录活动量按'));
-  assert.equal(H.version, '3.8.1');
-  assert.equal(badge.textContent, '组织管理版 V3.8.1');
+  assert.equal(H.version, '3.8.2');
+  assert.equal(badge.textContent, '组织管理版 V3.8.2');
 });
 
 test('unrecorded activity and ratios display as red zero while source marks stay visible', () => {
@@ -136,6 +136,125 @@ test('store filter keeps all-store selection independent of the old page filter'
   listeners.change({target});
   assert(H.html.includes('复制本店图片'));
   assert(!H.html.includes('<h2>黄浦大区合计</h2>'));
+});
+
+function changeFilter(app, name, value) {
+  const page = {}, control = {dataset: {monthlyFilter: name}, value};
+  const target = {closest: selector => selector === '#monthly-activity' ? page : selector === '[data-monthly-filter]' ? control : null};
+  app.listeners.change({target});
+}
+function selectMarkup(html, id) {
+  const match = html.match(new RegExp('<select\\b([^>]*\\bid="' + id + '"[^>]*)>([\\s\\S]*?)<\\/select>'));
+  assert(match, 'Expected select #' + id);
+  return {attributes: match[1], content: match[2], values: [...match[2].matchAll(/<option\b[^>]*\bvalue="([^"]*)"[^>]*>/g)].map(option => option[1])};
+}
+function tableMarkup(html) {
+  const match = html.match(/<table\b[^>]*class="[^"]*hp-monthly-table[^"]*"[^>]*>[\s\S]*?<\/table>/);
+  assert(match, 'Expected monthly activity table');
+  return match[0];
+}
+
+test('month filter starts with all base months and leaves the ranking month independently selectable', () => {
+  const app = setup(), {H} = app;
+  H.render();
+  const selector = selectMarkup(H.html, 'monthly-month');
+  assert(selector.attributes.includes('data-monthly-filter="month"'));
+  assert(selector.content.includes('全部月份'));
+  assert.deepEqual(selector.values, ['', ...months]);
+  assert.equal(H.ui.monthlyBoard.month, '');
+  assert.deepEqual(Array.from(H.monthlyExportModel('合成门店').months), months);
+  const rankSelector = selectMarkup(H.html, 'monthly-rank-month');
+  assert.deepEqual(rankSelector.values, months);
+  assert(!/\bdisabled\b/.test(rankSelector.attributes));
+  changeFilter(app, 'rankMonth', '2026-09');
+  H.render();
+  assert.equal(H.monthlyExportModel('合成门店').rankMonth, '2026-09');
+  assert.deepEqual(Array.from(H.monthlyExportModel('合成门店').months), months, 'independent ranking changes must not filter the main table');
+});
+
+test('one selected month preserves every hierarchy node and synchronizes table, notes, ranking and export', () => {
+  const app = setup(), {H, view, nodes} = app;
+  for (const node of nodes) for (const month of months) {
+    node.months[month].view = month === '2026-09' ? 17 : month === '2026-10' ? 27 : 37;
+    node.cellMeta[month] = {owner: {status: 'unconfirmed', note: month + '来源范围待核', sourcePeriods: [month + '-10至' + month + '-12']}};
+  }
+  for (const month of months) view.rankings['合成门店'][month] = {...app.ranking, month};
+  H.data.facts = [{personId: 'SYNTHETIC-MONTH', metric: 'view', start: '2026-09-01', value: 17}];
+  const beforeFacts = JSON.stringify(H.data.facts), beforeView = JSON.stringify(view);
+  H.render();
+  const allIds = Array.from(H.monthlyExportModel('合成门店').rows, row => row.id);
+  changeFilter(app, 'month', '2026-10');
+  assert.equal(H.ui.monthlyBoard.month, '2026-10');
+  const table = tableMarkup(H.html);
+  assert.equal((table.match(/rowspan="1"/g) || []).length, 3);
+  assert.equal((table.match(/class="hp-monthly-month">10月<\/td>/g) || []).length, 3);
+  assert(!table.includes('>9月<') && !table.includes('>11月<'));
+  assert(table.includes('合成门店') && table.includes('A组') && table.includes('合成顾问&lt;script&gt;'));
+  assert.match(table, /aria-label="[^"]*10月[^"]*"/);
+  assert(!table.includes('三个月活动量'));
+  assert(H.html.includes('<p>2026年10月</p>'));
+  const rankingSelect = selectMarkup(H.html, 'monthly-rank-month');
+  assert.deepEqual(rankingSelect.values, ['2026-10']);
+  assert(/\bdisabled\b/.test(rankingSelect.attributes));
+  assert.equal(H.ui.monthlyBoard.rankMonth, '2026-10');
+  const exported = H.monthlyExportModel('合成门店');
+  assert.deepEqual(Array.from(exported.months), ['2026-10']);
+  assert.deepEqual(Array.from(exported.rows, row => row.id), allIds);
+  assert.equal(exported.subtitle, '2026年10月');
+  assert.equal(exported.rankMonth, '2026-10');
+  assert.equal(exported.ranking.month, '2026-10');
+  assert.equal(H.monthlyFormatCell(exported.rows[2], exported.months[0], 'view').value, 27);
+  const notes = exported.notes.join('\n');
+  assert(notes.includes('10月业主面见'));
+  assert(!notes.includes('9月业主面见') && !notes.includes('11月业主面见'));
+  const footer = H.html.slice(H.html.indexOf('<footer class="hp-monthly-notes">'));
+  assert(footer.includes('10月业主面见'));
+  assert(!footer.includes('9月业主面见') && !footer.includes('11月业主面见'));
+  assert.equal(JSON.stringify(H.data.facts), beforeFacts);
+  assert.equal(JSON.stringify(view), beforeView, 'display filtering must not rewrite the base model or its month list');
+});
+
+test('changing stores retains the selected month and choosing all restores all base months', () => {
+  const app = setup(), {H, view} = app;
+  view.stores.push('合成二店');
+  view.rankings['合成二店'] = Object.fromEntries(months.map(month => [month, {...app.ranking, month}]));
+  const secondNodes = view.nodes.filter(node => node.level !== 'region').map(node => ({...JSON.parse(JSON.stringify(node)), id: node.id + '-second', parent: node.parent === 'region' ? 'region' : node.parent + '-second', store: '合成二店', label: node.level === 'store' ? '合成二店' : node.label}));
+  view.nodes.push(...secondNodes);
+  H.render();
+  changeFilter(app, 'month', '2026-10');
+  changeFilter(app, 'store', '合成二店');
+  assert.equal(H.ui.monthlyBoard.month, '2026-10');
+  assert.equal(H.ui.monthlyBoard.store, '合成二店');
+  assert.deepEqual(Array.from(H.monthlyExportModel('合成二店').months), ['2026-10']);
+  assert.equal(H.monthlyExportModel('合成二店').rows.length, 3);
+  assert(H.monthlyExportModel('合成二店').rows.every(row => row.store === '合成二店'));
+  assert.equal((tableMarkup(H.html).match(/rowspan="1"/g) || []).length, 3);
+  changeFilter(app, 'store', '');
+  assert.equal(H.ui.monthlyBoard.month, '2026-10');
+  assert.equal((H.html.match(/rowspan="1"/g) || []).length, 7, 'all stores must retain region, stores, groups and consultants');
+  changeFilter(app, 'month', '');
+  assert.equal(H.ui.monthlyBoard.month, '');
+  assert.deepEqual(Array.from(H.monthlyExportModel('合成二店').months), months);
+  assert.equal((H.html.match(/rowspan="3"/g) || []).length, 7);
+  assert(!/\bdisabled\b/.test(selectMarkup(H.html, 'monthly-rank-month').attributes));
+  assert.deepEqual(selectMarkup(H.html, 'monthly-month').values, ['', ...months]);
+  changeFilter(app, 'rankMonth', '2026-09');
+  assert.equal(H.monthlyExportModel('合成二店').rankMonth, '2026-09');
+});
+
+test('unavailable month selections fall back to all without altering the base data', () => {
+  const app = setup(), {H, view} = app;
+  H.ui.monthlyBoard = {store: '合成门店', month: '2031-12', rankMonth: '2026-11'};
+  H.data.facts = [{metric: 'view', start: '2026-11-01', value: 9}];
+  const beforeFacts = JSON.stringify(H.data.facts), beforeView = JSON.stringify(view);
+  H.render();
+  assert.equal(H.ui.monthlyBoard.month, '');
+  assert.deepEqual(Array.from(H.monthlyExportModel('合成门店').months), months);
+  changeFilter(app, 'month', 'not-a-month');
+  assert.equal(H.ui.monthlyBoard.month, '');
+  assert.deepEqual(selectMarkup(H.html, 'monthly-month').values, ['', ...months]);
+  assert.equal(JSON.stringify(H.data.facts), beforeFacts);
+  assert.equal(JSON.stringify(view), beforeView);
 });
 
 test('rankings label source problems as pending and export the same selected month', () => {

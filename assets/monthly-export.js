@@ -9,19 +9,31 @@ const rankReason=(item,ranking,side)=>{
  const values=item.values||{};
  return '买卖带看 '+H.fmt(values.view)+' 次；重点渠道新增 '+H.fmt(values.channel)+'。两项等权百分位综合'+(side==='bottom'?'位于本店末段，建议核实活动安排与需要的支持。':'位于本店前列，可结合具体案例分享做法。');
 };
-H.monthlyImageLayout=model=>{
+H.monthlyImageLayout=(model,measure)=>{
  const columns=model.columns.filter(c=>!['organization','object','month'].includes(c.key||c.id));
  const width=1440,pad=36,objectWidth=210,monthWidth=84,remaining=width-pad*2-objectWidth-monthWidth;
  const weights={house:1,owner:.82,hmall:1,channel:1,entered:1.25,rate:1.2,view:1};
  const total=columns.reduce((s,c)=>s+(weights[c.key||c.id]||1),0);
- return {width,pad,columns,widths:[objectWidth,monthWidth,...columns.map(c=>remaining*(weights[c.key||c.id]||1)/total)],rowHeight:32,headerHeight:86,titleHeight:116};
+ measure=measure||document.createElement('canvas').getContext('2d');if(!measure)throw Error('当前浏览器无法生成图片');
+ const rowHeight=32,headerHeight=86,monthCount=Math.max(1,model.months.length),singleMonth=monthCount===1;
+ const rowBlocks=(model.rows||[]).map(node=>{
+  const indent=node.level==='person'?26:node.level==='group'?18:12,textWidth=objectWidth-indent-16;
+  measure.font=(node.level==='person'?'400 ':'700 ')+'22px '+face;
+  const nameLines=wrap(measure,node.label||node.person||node.group||node.store,textWidth),nameHeight=nameLines.length*28;
+  const managerNames=node.level==='group'?(node.managerNames||[]).join('、'):'';measure.font='14px '+face;
+  const managerLines=managerNames?wrap(measure,'经理：'+managerNames,textWidth):[],contentHeight=nameHeight+(managerLines.length?4+managerLines.length*18:0);
+  const height=singleMonth?Math.max(rowHeight,contentHeight+(node.level==='person'?4:8)):Math.max(rowHeight*monthCount,node.level==='person'?contentHeight+4:30+contentHeight+8);
+  const nameTop=singleMonth?(height-contentHeight)/2:node.level==='person'?(height-nameHeight)/2:30;
+  return {indent,nameLines,managerLines,nameTop,managerTop:nameTop+nameHeight+4,height,monthHeight:height/monthCount,levelLabel:singleMonth?'':({region:'大区',store:'门店',group:'店组'}[node.level]||'')};
+ });
+ return {width,pad,columns,widths:[objectWidth,monthWidth,...columns.map(c=>remaining*(weights[c.key||c.id]||1)/total)],rowHeight,headerHeight,titleHeight:116,rowBlocks,tableHeight:headerHeight+rowBlocks.reduce((sum,row)=>sum+row.height,0)};
 };
 H.renderMonthlyStorePNG=async model=>{
  if(document.fonts?.ready)await document.fonts.ready;
  if(!model.rows?.length)throw Error('该店暂无可导出的月度记录');
- const layout=H.monthlyImageLayout(model),{width,pad,columns,widths,rowHeight,headerHeight,titleHeight}=layout;
  const months=model.months,measure=document.createElement('canvas').getContext('2d');
  if(!measure)throw Error('当前浏览器无法生成图片');
+ const layout=H.monthlyImageLayout(model,measure),{width,pad,columns,widths,headerHeight,titleHeight,tableHeight,rowBlocks}=layout;
  measure.font='16px '+face;
  const notes=(model.notes||[]).flatMap(n=>wrap(measure,n,width-pad*2));
  const ranking=model.ranking,halfWidth=(width-pad*2-24)/2,rankCards=[];
@@ -48,7 +60,6 @@ H.renderMonthlyStorePNG=async model=>{
   if(ranking.missing?.length)rankingNotes.push('比较口径待核对：'+ranking.missing.map(p=>(p.name||p.person)+'（'+(p.missing||[]).join('、')+'）').join('；')+'。未导入统计来源、来源冲突或周期不同的记录，暂不参与排名。');
  }
  const rankNoteLines=rankingNotes.flatMap(n=>wrap(measure,n,width-pad*2));
- const tableHeight=headerHeight+model.rows.length*months.length*rowHeight;
  const notesHeight=notes.length?28+notes.length*24:0;
  const ranksHeight=ranking?76+Math.max(0,...rankCards.map(c=>c.height))+24+rankNoteLines.length*24:0;
  const height=titleHeight+tableHeight+notesHeight+ranksHeight+62;
@@ -67,30 +78,26 @@ H.renderMonthlyStorePNG=async model=>{
  const headers=['组织 / 姓名','月份',...columns.map(c=>c.label)];
  widths.forEach((w,i)=>{box(x,y,w,headerHeight,'#eee9f8');center(headers[i],x,y,w,headerHeight,20,'#3a2856',true);x+=w;});
  y+=headerHeight;
- for(const node of model.rows){
+ for(const [rowIndex,node] of model.rows.entries()){
+  const {indent,nameLines,managerLines,nameTop,managerTop,height:entityHeight,monthHeight,levelLabel}=rowBlocks[rowIndex],blockTop=y;
   const orgFill=node.level==='store'?'#eee6fa':node.level==='group'?'#f5f0fb':'#ffffff';
-  box(pad,y,widths[0],rowHeight*months.length,orgFill);
-  const indent=node.level==='person'?26:node.level==='group'?18:12;
-  const levelLabel=({region:'大区',store:'门店',group:'店组'}[node.level]||'');
+  box(pad,y,widths[0],entityHeight,orgFill);
   if(levelLabel)text(levelLabel,pad+indent,y+10,14,'#79678e');
-  ctx.font=(node.level==='person'?'400 ':'700 ')+'22px '+face;
-  const nameLines=wrap(ctx,node.label||node.person||node.group||node.store,widths[0]-indent-16);
-  const nameTop=node.level==='person'?(rowHeight*months.length-nameLines.length*28)/2:30;
   nameLines.forEach((line,i)=>text(line,pad+indent,y+nameTop+i*28,22,'#3b275c',node.level!=='person'));
-  const managerNames=node.level==='group'?(node.managerNames||[]).join('、'):'';
-  if(managerNames){ctx.font='14px '+face;wrap(ctx,'经理：'+managerNames,widths[0]-indent-16).slice(0,2).forEach((line,i)=>text(line,pad+indent,y+nameTop+nameLines.length*28+4+i*18,14,'#79678e'));}
+  managerLines.forEach((line,i)=>text(line,pad+indent,y+managerTop+i*18,14,'#79678e'));
   for(const month of months){
    x=pad+widths[0];const fill=month===months.at(-1)?'#f8f5fc':'#ffffff';
-   box(x,y,widths[1],rowHeight,fill);center(monthLabel(month),x,y,widths[1],rowHeight,18,'#655a75');x+=widths[1];
+   box(x,y,widths[1],monthHeight,fill);center(monthLabel(month),x,y,widths[1],monthHeight,18,'#655a75');x+=widths[1];
    columns.forEach((column,index)=>{
     const key=column.key||column.id,cell=H.monthlyFormatCell(node,month,key),value=cell.value,zero=cell.zero;
-    box(x,y,widths[index+2],rowHeight,zero?'#fcf0f2':fill);
-    center(cell.text,x,y,widths[index+2],rowHeight,20,zero?'#c83245':value===null||value===undefined?'#93651a':'#252139',zero);
+    box(x,y,widths[index+2],monthHeight,zero?'#fcf0f2':fill);
+    center(cell.text,x,y,widths[index+2],monthHeight,20,zero?'#c83245':value===null||value===undefined?'#93651a':'#252139',zero);
     if(cell.asterisk)text('*',x+widths[index+2]-14,y+5,15,'#a76811');
     x+=widths[index+2];
    });
-   y+=rowHeight;
+   y+=monthHeight;
   }
+  y=blockTop+entityHeight;
   ctx.fillStyle='#cbbde1';ctx.fillRect(pad,y-1,width-pad*2,2);
  }
  if(notes.length){y+=18;for(const line of notes){text(line,pad,y,16,'#776783');y+=24;}y+=10;}
@@ -123,7 +130,7 @@ H.previewMonthlyStore=(blob,filename)=>{
 const exportStore=async(store,copy)=>{
  try{
   const model=H.monthlyExportModel(store);if(!store||!model.rows?.length){H.toast('请先选择有数据的门店');return;}
-  const filename=(store+'_活动量_'+model.months[0]+'至'+model.months.at(-1)+'.png').replace(/[\\/:*?"<>|]/g,'_');
+  const period=model.months.length===1?model.months[0]:model.months[0]+'至'+model.months.at(-1),filename=(store+'_活动量_'+period+'.png').replace(/[\\/:*?"<>|]/g,'_');
   const promise=H.renderMonthlyStorePNG(model);
   if(copy&&navigator.clipboard?.write&&globalThis.ClipboardItem){
    try{await navigator.clipboard.write([new ClipboardItem({'image/png':promise})]);H.toast('本店完整看板已复制，可直接粘贴图片');return;}
